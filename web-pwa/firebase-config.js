@@ -12,12 +12,12 @@
  *    Firebase Console -> Authentication -> Settings -> Authorized domains.
  */
 window.PIZZA_CLUB_FIREBASE_CONFIG = {
-  apiKey: "YOUR_FIREBASE_WEB_API_KEY",
+  apiKey: "PEGÁ_ACÁ_TU_API_KEY",
   authDomain: "gen-lang-client-0684931110.firebaseapp.com",
   projectId: "gen-lang-client-0684931110",
   storageBucket: "gen-lang-client-0684931110.firebasestorage.app",
-  messagingSenderId: "YOUR_FIREBASE_MESSAGING_SENDER_ID",
-  appId: "YOUR_FIREBASE_WEB_APP_ID"
+  messagingSenderId: "PEGÁ_ACÁ_TU_MESSAGING_SENDER_ID",
+  appId: "PEGÁ_ACÁ_TU_APP_ID"
 };
 
 window.PIZZA_CLUB_DATABASE_ID =
