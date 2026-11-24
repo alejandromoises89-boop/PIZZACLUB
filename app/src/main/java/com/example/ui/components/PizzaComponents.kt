@@ -30,7 +30,9 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeliveryDining
+import androidx.compose.material.icons.rounded.Face
 import androidx.compose.material.icons.rounded.LocalFireDepartment
+import androidx.compose.material.icons.rounded.PhoneIphone
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material.icons.rounded.Verified
@@ -46,7 +48,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,7 +68,9 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.FulfillmentType
 import com.example.data.OrderStatus
+import com.example.data.formatOrderCountdownLabel
 import com.example.data.formatPyg
+import kotlinx.coroutines.delay
 import com.example.ui.theme.CheeseContainer
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.DangerRedContainer
@@ -130,7 +138,8 @@ fun OrderStatusBadge(
 fun OrderProgressStepper(
     status: OrderStatus,
     fulfillmentType: FulfillmentType,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    stageUpdatedAtMillis: Long = System.currentTimeMillis()
 ) {
     if (status == OrderStatus.CANCELLED) {
         Surface(
@@ -182,19 +191,24 @@ fun OrderProgressStepper(
         label = "pulseScale"
     )
 
-    val liveEtaCopy = when (status) {
-        OrderStatus.PENDING_PAYMENT -> if (fulfillmentType == FulfillmentType.DELIVERY) {
-            "Tiempo estimado tras confirmar depósito: 30 – 45 min"
-        } else {
-            "Tiempo estimado tras confirmar depósito: 20 – 30 min"
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val hasActiveCountdown = status == OrderStatus.PAYMENT_CONFIRMED ||
+        status == OrderStatus.PREPARING ||
+        status == OrderStatus.OUT_FOR_DELIVERY
+    LaunchedEffect(status, stageUpdatedAtMillis) {
+        nowMillis = System.currentTimeMillis()
+        while (hasActiveCountdown) {
+            delay(1_000L)
+            nowMillis = System.currentTimeMillis()
         }
-        OrderStatus.PAYMENT_CONFIRMED -> "¡Depósito confirmado! Tu pedido pasa directo a preparación."
-        OrderStatus.PREPARING -> "Tu pizza artesanal está en el horno de masa madre (~15 min)."
-        OrderStatus.READY_FOR_PICKUP -> "¡Tu pedido ya está listo para retirar en Pizza Club!"
-        OrderStatus.OUT_FOR_DELIVERY -> "¡Nuestro repartidor ya salió rumbo a tu dirección!"
-        OrderStatus.COMPLETED -> "Pedido entregado. ¡Gracias por elegir Pizza Club!"
-        OrderStatus.CANCELLED -> ""
     }
+
+    val liveEtaCopy = formatOrderCountdownLabel(
+        status = status,
+        fulfillmentType = fulfillmentType,
+        stageStartedAtMillis = stageUpdatedAtMillis,
+        nowMillis = nowMillis
+    )
 
     val accentColor = if (currentStep >= 1) WhatsAppGreen else TomatoPrimary
 
@@ -416,6 +430,70 @@ fun GoogleSignInActionButton(
                 style = MaterialTheme.typography.labelLarge
             )
         }
+    }
+}
+
+@Composable
+fun AppleSignInActionButton(
+    isLoading: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        enabled = !isLoading,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .testTag("apple_sign_in_button"),
+        shape = MaterialTheme.shapes.medium,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF111111),
+            contentColor = Color.White
+        )
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.PhoneIphone,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Iniciar sesión con Apple",
+            style = MaterialTheme.typography.labelLarge
+        )
+    }
+}
+
+@Composable
+fun BiometricSignInActionButton(
+    label: String,
+    isLoading: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = !isLoading,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .testTag("biometric_sign_in_button"),
+        shape = MaterialTheme.shapes.medium
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Face,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

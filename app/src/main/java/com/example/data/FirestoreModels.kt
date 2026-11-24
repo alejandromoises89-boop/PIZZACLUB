@@ -198,7 +198,8 @@ data class LocalSavedOrder(
     val whatsappNumber: String,
     val status: String,
     val whatsappUnlocked: Boolean,
-    val createdAtMillis: Long
+    val createdAtMillis: Long,
+    val stageUpdatedAtMillis: Long = createdAtMillis
 )
 
 object DefaultCatalogDefaults {
@@ -357,4 +358,54 @@ fun buildAdminCustomerThankYouMessage(
 fun instagramProfileUrl(handle: String): String {
     val clean = handle.trim().removePrefix("@").ifBlank { "Pizza.Club1" }
     return "https://www.instagram.com/$clean/"
+}
+
+fun formatOrderCountdownLabel(
+    status: OrderStatus,
+    fulfillmentType: FulfillmentType,
+    stageStartedAtMillis: Long,
+    nowMillis: Long
+): String {
+    val isDelivery = fulfillmentType == FulfillmentType.DELIVERY
+    val durationMinutes = when (status) {
+        OrderStatus.PAYMENT_CONFIRMED -> if (isDelivery) 35L else 25L
+        OrderStatus.PREPARING -> 15L
+        OrderStatus.OUT_FOR_DELIVERY -> 15L
+        else -> 0L
+    }
+
+    if (durationMinutes == 0L) {
+        return when (status) {
+            OrderStatus.PENDING_PAYMENT -> if (isDelivery) {
+                "Estimado tras confirmar: 35–45 min"
+            } else {
+                "Estimado tras confirmar: 20–25 min"
+            }
+            OrderStatus.READY_FOR_PICKUP -> "¡Listo para retirar ahora en el local!"
+            OrderStatus.COMPLETED -> "Pedido entregado · ¡Buen provecho!"
+            OrderStatus.CANCELLED -> "Pedido cancelado"
+            else -> ""
+        }
+    }
+
+    val safeStart = stageStartedAtMillis.coerceAtMost(nowMillis)
+    val targetMillis = safeStart + durationMinutes * 60_000L
+    val remainingSeconds = ((targetMillis - nowMillis) / 1_000L).coerceAtLeast(0L)
+    if (remainingSeconds == 0L) {
+        return when (status) {
+            OrderStatus.OUT_FOR_DELIVERY -> "Llegando en instantes"
+            OrderStatus.PREPARING -> "Saliendo del horno en instantes"
+            else -> if (isDelivery) "Entrega en instantes" else "Listo de un momento a otro"
+        }
+    }
+
+    val mins = remainingSeconds / 60L
+    val secs = remainingSeconds % 60L
+    val mmss = String.format(Locale.US, "%02d:%02d", mins, secs)
+    return when (status) {
+        OrderStatus.PAYMENT_CONFIRMED -> if (isDelivery) "Entrega aprox. en $mmss" else "Retiro aprox. en $mmss"
+        OrderStatus.PREPARING -> "Horneando · Listo en $mmss"
+        OrderStatus.OUT_FOR_DELIVERY -> "En camino · Llega en $mmss"
+        else -> mmss
+    }
 }

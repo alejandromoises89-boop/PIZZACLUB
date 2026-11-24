@@ -1,12 +1,12 @@
-const CACHE_NAME = "pizza-club-pwa-v4";
+const CACHE_NAME = "pizza-club-pwa-v5";
 const SHELL_ASSETS = [
-  "/",
-  "/index.html",
-  "/manifest.webmanifest",
-  "/icon.svg",
-  "/icon-192.png",
-  "/icon-512.png",
-  "/apple-touch-icon.png"
+  "./",
+  "./index.html",
+  "./manifest.webmanifest",
+  "./icon.svg",
+  "./icon-192.png",
+  "./icon-512.png",
+  "./apple-touch-icon.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -28,6 +28,6 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request).then((res) => res || caches.match("/index.html")))
+    fetch(event.request).catch(() => caches.match(event.request).then((res) => res || caches.match("./index.html")))
   );
 });

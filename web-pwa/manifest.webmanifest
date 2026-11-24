@@ -1,10 +1,10 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "Pizza Club — Ciudad del Este",
   "short_name": "Pizza Club",
   "description": "Pizzas artesanales de masa madre en Ciudad del Este sin registro. Pedido rápido, transferencia Itaú, seguimiento estilo PedidosYa y premio sorpresa en cada caja.",
-  "start_url": "/?source=pwa",
-  "scope": "/",
+  "start_url": "./?source=pwa",
+  "scope": "./",
   "display": "standalone",
   "display_override": [
     "standalone",
@@ -21,31 +21,31 @@
   ],
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "./icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-192.png",
+      "src": "./icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/icon-512.png",
+      "src": "./icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "./icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
@@ -56,10 +56,10 @@
       "name": "Pedir Pizzas",
       "short_name": "Menú",
       "description": "Elegí tus sabores y hacé tu pedido sin registrarte",
-      "url": "/?view=menu",
+      "url": "./?view=menu",
       "icons": [
         {
-          "src": "/icon-192.png",
+          "src": "./icon-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }
@@ -69,10 +69,10 @@
       "name": "Mis Pedidos",
       "short_name": "Pedidos",
       "description": "Seguí el estado en vivo de tu pedido",
-      "url": "/?view=history",
+      "url": "./?view=history",
       "icons": [
         {
-          "src": "/icon-192.png",
+          "src": "./icon-192.png",
           "sizes": "192x192",
           "type": "image/png"
         }

@@ -45,8 +45,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,6 +72,7 @@ import com.example.data.LocalSavedOrder
 import com.example.data.OrderStatus
 import com.example.data.OrderStatusTrackerModel
 import com.example.data.buildWhatsAppOrderMessage
+import com.example.data.formatOrderCountdownLabel
 import com.example.data.formatPyg
 import com.example.data.instagramProfileUrl
 import com.example.ui.components.InstagramLogoIcon
@@ -221,7 +228,9 @@ fun OrderTrackerScreen(
                     Spacer(Modifier.height(16.dp))
                     OrderProgressStepper(
                         status = effectiveStatus,
-                        fulfillmentType = FulfillmentType.fromRaw(activeOrder.fulfillmentType)
+                        fulfillmentType = FulfillmentType.fromRaw(activeOrder.fulfillmentType),
+                        stageUpdatedAtMillis = liveTracker?.takeIf { it.id == activeOrder.orderId }?.updatedAt?.toDate()?.time
+                            ?: activeOrder.stageUpdatedAtMillis
                     )
                 }
             }
@@ -574,6 +583,14 @@ private fun OrderHistorySection(
     onRefreshHistory: () -> Unit
 ) {
     val dateFormatter = remember { SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()) }
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(savedOrders) {
+        nowMillis = System.currentTimeMillis()
+        while (savedOrders.isNotEmpty()) {
+            delay(1_000L)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
 
     Card(
         shape = MaterialTheme.shapes.large,
@@ -657,6 +674,39 @@ private fun OrderHistorySection(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
+
+                        val stageMillis = trackerMatch?.updatedAt?.toDate()?.time ?: order.stageUpdatedAtMillis
+                        val countdownLabel = formatOrderCountdownLabel(
+                            status = effectiveStatus,
+                            fulfillmentType = FulfillmentType.fromRaw(order.fulfillmentType),
+                            stageStartedAtMillis = stageMillis,
+                            nowMillis = nowMillis
+                        )
+                        if (countdownLabel.isNotBlank() && effectiveStatus != OrderStatus.CANCELLED) {
+                            Surface(
+                                color = if (isConfirmed) WhatsAppGreenContainer else CheeseContainer,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Timer,
+                                        contentDescription = null,
+                                        tint = if (isConfirmed) WhatsAppGreen else OnCheeseContainer,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = countdownLabel,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = if (isConfirmed) WhatsAppGreen else OnCheeseContainer
+                                    )
+                                }
+                            }
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),

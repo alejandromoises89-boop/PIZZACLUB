@@ -32,9 +32,15 @@ class LocalOrderStore(private val context: Context) {
     suspend fun updateOrderStatus(orderId: String, status: String, whatsappUnlocked: Boolean) {
         context.pizzaClubDataStore.edit { prefs ->
             val current = parseOrdersJson(prefs[ordersKey] ?: "[]")
+            val now = System.currentTimeMillis()
             val updated = current.map { existing ->
                 if (existing.orderId == orderId) {
-                    existing.copy(status = status, whatsappUnlocked = whatsappUnlocked)
+                    val stageMillis = if (existing.status != status) now else existing.stageUpdatedAtMillis
+                    existing.copy(
+                        status = status,
+                        whatsappUnlocked = whatsappUnlocked,
+                        stageUpdatedAtMillis = stageMillis
+                    )
                 } else {
                     existing
                 }
@@ -82,6 +88,7 @@ class LocalOrderStore(private val context: Context) {
                     put("status", o.status)
                     put("whatsappUnlocked", o.whatsappUnlocked)
                     put("createdAtMillis", o.createdAtMillis)
+                    put("stageUpdatedAtMillis", o.stageUpdatedAtMillis)
                 }
             )
         }
@@ -131,7 +138,11 @@ class LocalOrderStore(private val context: Context) {
                         whatsappNumber = obj.optString("whatsappNumber", "59593551936"),
                         status = obj.optString("status", OrderStatus.PENDING_PAYMENT.rawValue),
                         whatsappUnlocked = obj.optBoolean("whatsappUnlocked", false),
-                        createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis())
+                        createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis()),
+                        stageUpdatedAtMillis = obj.optLong(
+                            "stageUpdatedAtMillis",
+                            obj.optLong("createdAtMillis", System.currentTimeMillis())
+                        )
                     )
                 )
             }

@@ -23,6 +23,8 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Chat
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Face
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material.icons.rounded.Warning
@@ -87,6 +89,8 @@ import java.net.URLEncoder
 fun AdminDashboardScreen(
     viewModel: AdminViewModel,
     adminEmail: String,
+    isBiometricEnabled: Boolean = false,
+    onToggleBiometricLock: () -> Unit = {},
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -136,6 +140,20 @@ fun AdminDashboardScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = onToggleBiometricLock,
+                            modifier = Modifier.testTag("admin_biometric_lock_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isBiometricEnabled) Icons.Rounded.Lock else Icons.Rounded.Face,
+                                contentDescription = if (isBiometricEnabled) {
+                                    "Bloquear con Face ID / Biometría"
+                                } else {
+                                    "Activar desbloqueo con Face ID / Biometría"
+                                },
+                                tint = MaterialTheme.colorScheme.primary
                             )
                         }
                         IconButton(

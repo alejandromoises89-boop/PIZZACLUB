@@ -26,10 +26,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Pizza Club" />
-  <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
-  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
 
   <!-- Google Search Rich Results (Local Virtual Store + Menu + Social + Order Action) -->
   <script type="application/ld+json">
@@ -107,7 +107,7 @@
   </script>
 
   <!-- Optional Firebase Web SDK configuration (when deployed with firebase-config.js) -->
-  <script src="/firebase-config.js" defer></script>
+  <script src="./firebase-config.js" defer></script>
   <!-- Live Camera QR Scanner (html5-qrcode) -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 
@@ -248,6 +248,16 @@
       display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
       border-radius: 999px; font-size: 12px; font-weight: 700;
       background: rgba(231, 173, 72, 0.2); color: var(--gold);
+      font-variant-numeric: tabular-nums;
+    }
+    .countdown-pill {
+      display: inline-flex; align-items: center; gap: 6px; width: 100%;
+      margin-top: 8px; padding: 7px 10px; border-radius: 10px;
+      font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+      background: var(--gold-soft); color: #5C3D06;
+    }
+    .countdown-pill.confirmed {
+      background: var(--wa-soft); color: var(--wa);
     }
     .py-progress-track {
       height: 8px; border-radius: 999px; background: rgba(255,255,255,0.14);
@@ -377,7 +387,7 @@
     </section>
 
     <footer style="text-align:center;margin-top:24px;padding:12px 0;font-size:12px;color:var(--muted)">
-      Pizza Club · Ciudad del Este · <a href="/admin.html" style="color:var(--muted);text-decoration:underline">Panel Admin</a>
+      Pizza Club · Ciudad del Este · <a href="./admin.html" style="color:var(--muted);text-decoration:underline">Panel Admin</a>
     </footer>
   </div>
 
@@ -558,21 +568,82 @@
     function updateOrderStatusInHistory(orderId, status, whatsappUnlocked) {
       const list = loadOrders();
       let changed = false;
+      const nowIso = new Date().toISOString();
       const next = list.map((order) => {
         if (order.orderId !== orderId) return order;
         changed = true;
+        const nextStatus = status || order.status;
+        const stageStartedAtIso = nextStatus !== order.status
+          ? nowIso
+          : (order.stageStartedAtIso || order.createdAtIso || nowIso);
         return {
           ...order,
-          status: status || order.status,
+          status: nextStatus,
           whatsappUnlocked: Boolean(whatsappUnlocked),
           cloudSynced: true,
-          lastCheckedIso: new Date().toISOString()
+          stageStartedAtIso,
+          lastCheckedIso: nowIso
         };
       });
       if (changed) {
         saveOrders(next);
         renderOrderHistory();
       }
+    }
+
+    function formatOrderCountdown(order, nowMs) {
+      const status = order?.status || "PENDING_PAYMENT";
+      const isDelivery = order?.fulfillmentType === "DELIVERY";
+      const durationMins =
+        status === "PAYMENT_CONFIRMED" ? (isDelivery ? 35 : 25) :
+        status === "PREPARING" ? 15 :
+        status === "OUT_FOR_DELIVERY" ? 15 : 0;
+
+      if (durationMins === 0) {
+        if (status === "PENDING_PAYMENT") {
+          return isDelivery
+            ? "⏱️ Estimado tras confirmar: 35–45 min"
+            : "⏱️ Estimado tras confirmar: 20–25 min";
+        }
+        if (status === "READY_FOR_PICKUP") return "🏪 ¡Listo para retirar ahora en el local!";
+        if (status === "COMPLETED") return "🍕 Pedido entregado · ¡Buen provecho!";
+        if (status === "CANCELLED") return "✕ Pedido cancelado";
+        return "";
+      }
+
+      const parsedStart = Date.parse(order.stageStartedAtIso || order.createdAtIso || "");
+      const safeStart = Number.isFinite(parsedStart) ? Math.min(parsedStart, nowMs) : nowMs;
+      const remSec = Math.max(0, Math.floor((safeStart + durationMins * 60000 - nowMs) / 1000));
+      if (remSec === 0) {
+        if (status === "OUT_FOR_DELIVERY") return "🛵 Llegando en instantes";
+        if (status === "PREPARING") return "🔥 Saliendo del horno en instantes";
+        return isDelivery ? "⏱️ Entrega en instantes" : "⏱️ Listo de un momento a otro";
+      }
+
+      const mm = String(Math.floor(remSec / 60)).padStart(2, "0");
+      const ss = String(remSec % 60).padStart(2, "0");
+      const mmss = `${mm}:${ss}`;
+      if (status === "PAYMENT_CONFIRMED") {
+        return isDelivery ? `⏱️ Entrega aprox. en ${mmss}` : `⏱️ Retiro aprox. en ${mmss}`;
+      }
+      if (status === "PREPARING") return `🔥 Horneando · Listo en ${mmss}`;
+      if (status === "OUT_FOR_DELIVERY") return `🛵 En camino · Llega en ${mmss}`;
+      return `⏱️ ${mmss}`;
+    }
+
+    function tickOrderCountdowns() {
+      const nodes = document.querySelectorAll("[data-countdown-order]");
+      if (nodes.length === 0) return;
+      const orders = loadOrders();
+      if (orders.length === 0) return;
+      const byId = new Map(orders.map((o) => [o.orderId, o]));
+      const nowMs = Date.now();
+      nodes.forEach((el) => {
+        const order = byId.get(el.getAttribute("data-countdown-order"));
+        if (order) {
+          el.textContent = formatOrderCountdown(order, nowMs);
+        }
+      });
     }
 
     function buildWhatsAppMessage(order) {
@@ -763,6 +834,7 @@
         orderId,
         orderNumber,
         createdAtIso: now.toISOString(),
+        stageStartedAtIso: now.toISOString(),
         lastCheckedIso: now.toISOString(),
         customerName: name,
         customerPhone: phone,
@@ -795,7 +867,7 @@
 
     window.checkSingleOrderStatus = async function (orderId) {
       if (!firestoreApi) {
-        alert("Historial guardado en este navegador. Configurá firebase-config.js para consultar el estado en vivo del administrador.");
+        alert("Historial guardado en este navegador. Completá las claves reales en web-pwa/firebase-config.js para consultar confirmaciones del administrador en la nube.");
         return;
       }
       try {
@@ -862,10 +934,12 @@
       const stepIdx = activeMeta.step;
       const fillPct = stepIdx < 0 ? 100 : ((stepIdx + 1) / 5) * 100;
 
+      const nowMs = Date.now();
+      const heroCountdownText = formatOrderCountdown(activeOrder, nowMs);
       const heroHtml = `<section class="py-hero" aria-label="Seguimiento en vivo del pedido">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <span class="pill gold">✨ ${escapeHtml(activeOrder.orderNumber)}</span>
-          <span class="py-eta-chip">${activeMeta.eta}</span>
+          <span class="py-eta-chip" data-countdown-order="${escapeHtml(activeOrder.orderId)}">${escapeHtml(heroCountdownText)}</span>
         </div>
         <h2 style="margin:12px 0 4px;font-size:23px">${activeMeta.headline}</h2>
         <p style="margin:0;font-size:13px;opacity:.9;line-height:1.45">${activeMeta.note}</p>
@@ -921,7 +995,11 @@
       ` + orders.map((order) => {
         const meta = STATUS_META[order.status] || STATUS_META.PENDING_PAYMENT;
         const isSelected = order.orderId === activeOrder.orderId;
+        const isConfirmed = Boolean(order.whatsappUnlocked) || (meta.confirmed && order.status !== "CANCELLED");
         const summary = (order.items || []).map((it) => `${it.quantity}x ${escapeHtml(it.productName)}`).join(", ");
+        const countdownHtml = order.status !== "CANCELLED"
+          ? `<div class="countdown-pill ${isConfirmed ? "confirmed" : ""}" data-countdown-order="${escapeHtml(order.orderId)}">${escapeHtml(formatOrderCountdown(order, nowMs))}</div>`
+          : "";
 
         return `<article class="card" onclick="selectHistoryOrder('${escapeHtml(order.orderId)}')" style="cursor:pointer;${isSelected ? "border:1.5px solid var(--primary);background:#FFFDF9" : ""}">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -936,10 +1014,12 @@
             <span style="color:var(--muted)">${escapeHtml(order.preparationMode)}</span>
             <strong style="color:var(--primary)">${fmt(order.totalAmountPyg)}</strong>
           </div>
+          ${countdownHtml}
         </article>`;
       }).join("");
 
       container.innerHTML = heroHtml + historyCardsHtml;
+      tickOrderCountdowns();
     }
 
     let html5QrInstance = null;
@@ -1035,11 +1115,30 @@
       activeListeners.set(orderId, unsub);
     }
 
+    function isValidFirebaseConfig(cfg) {
+      if (!cfg || typeof cfg !== "object") return false;
+      const required = [cfg.apiKey, cfg.projectId, cfg.appId];
+      return required.every((val) => {
+        const s = String(val || "").trim();
+        return s.length > 0 && !/YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_/i.test(s);
+      });
+    }
+
     async function initFirebaseIfConfigured() {
       const syncBanner = document.getElementById("cloud-sync-status");
       const cfg = window.PIZZA_CLUB_FIREBASE_CONFIG;
-      if (!cfg || !cfg.apiKey || !cfg.projectId) {
-        syncBanner.innerHTML = "📱 <strong>Historial local activo (localStorage):</strong> Tus pedidos quedan guardados en este dispositivo. Agregá <code>/firebase-config.js</code> en Hosting para verificar confirmaciones del Admin en tiempo real.";
+      if (!isValidFirebaseConfig(cfg)) {
+        syncBanner.innerHTML = `
+          <div>📱 <strong>Modo local activo (<code>localStorage</code> + WhatsApp):</strong> Tus pedidos quedan guardados en este dispositivo.</div>
+          <details style="margin-top:6px">
+            <summary style="cursor:pointer;font-weight:700;color:var(--dark)">⚙️ Cómo activar la sincronización completa en la nube (<code>firebase-config.js</code>)</summary>
+            <ol style="margin:8px 0 2px;padding-left:18px;line-height:1.55">
+              <li>Abrí la plantilla <code>web-pwa/firebase-config.js</code> que ya está incluida en el proyecto.</li>
+              <li>Obtené tus credenciales Web en <strong>Firebase Console</strong> (<code>gen-lang-client-0684931110</code> → Configuración → Tus apps → Web) o con <code>firebase apps:sdkconfig web</code>.</li>
+              <li>Reemplazá <code>YOUR_FIREBASE_WEB_API_KEY</code>, <code>YOUR_FIREBASE_MESSAGING_SENDER_ID</code> y <code>YOUR_FIREBASE_WEB_APP_ID</code> (dejando <code>PIZZA_CLUB_DATABASE_ID</code> tal cual).</li>
+              <li>Si desplegás con GitHub Actions, guardá el archivo completo en el secreto <code>FIREBASE_CONFIG_JS</code> y autorizá tu dominio en <em>Firebase Authentication → Authorized domains</em> para usar <a href="./admin.html" style="color:var(--primary)">Panel Admin</a>.</li>
+            </ol>
+          </details>`;
         return;
       }
       try {
@@ -1106,11 +1205,12 @@
     });
 
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
     }
 
     window.renderCatalog();
     renderOrderHistory();
+    setInterval(tickOrderCountdowns, 1000);
     const initialView = new URLSearchParams(window.location.search).get("view");
     if (initialView === "history") {
       window.switchView("history");

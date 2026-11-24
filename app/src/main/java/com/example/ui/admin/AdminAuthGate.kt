@@ -1,5 +1,6 @@
 package com.example.ui.admin
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.R
 import com.example.data.PizzaClubRepository
+import com.example.ui.components.AppleSignInActionButton
+import com.example.ui.components.BiometricSignInActionButton
 import com.example.ui.components.GoogleSignInActionButton
 import com.example.viewmodel.AdminViewModel
 import com.google.firebase.Firebase
@@ -62,6 +65,10 @@ fun AdminAuthGate(
     var isSigningIn by remember { mutableStateOf(false) }
     var isCheckingAdmin by remember { mutableStateOf(false) }
     var isAuthorizedAdmin by remember { mutableStateOf(false) }
+    var biometricLockEnabled by remember(context) { mutableStateOf(isBiometricLockEnabled(context)) }
+    var isBiometricUnlocked by remember(context) {
+        mutableStateOf(!isBiometricLockEnabled(context))
+    }
 
     DisposableEffect(Unit) {
         val listener = FirebaseAuth.AuthStateListener { auth ->
@@ -71,14 +78,17 @@ fun AdminAuthGate(
         onDispose { Firebase.auth.removeAuthStateListener(listener) }
     }
 
-    // Silent check on first entry into Admin tab
+    // Silent check on first entry into Admin tab (if biometric lock is disabled)
     LaunchedEffect(Unit) {
-        if (currentUser == null) {
+        if (currentUser == null && !biometricLockEnabled) {
             attemptAutoSignIn(
                 context = context,
                 credentialManager = credentialManager,
-                onAuthSuccess = { currentUser = Firebase.auth.currentUser },
-                onUnauthenticated = { /* Show interactive Google Sign-In button */ },
+                onAuthSuccess = {
+                    isBiometricUnlocked = true
+                    currentUser = Firebase.auth.currentUser
+                },
+                onUnauthenticated = { /* Show interactive Sign-In buttons */ },
                 scope = scope
             )
         }
@@ -95,10 +105,22 @@ fun AdminAuthGate(
             val repo = PizzaClubRepository(FirebaseFirestore.getInstance(dbId))
             isAuthorizedAdmin = repo.verifyIsAdmin()
             isCheckingAdmin = false
+            if (isAuthorizedAdmin && biometricLockEnabled && !isBiometricUnlocked && canUseBiometricAuth(context)) {
+                launchBiometricAuth(
+                    context = context,
+                    onSuccess = {
+                        authError = null
+                        isBiometricUnlocked = true
+                    },
+                    onError = { msg -> authError = msg },
+                    onCancelled = {}
+                )
+            }
         }
     }
 
-    if (user == null) {
+    if (user == null || (isAuthorizedAdmin && biometricLockEnabled && !isBiometricUnlocked)) {
+        val hasSavedSession = user != null
         Box(
             modifier = modifier
                 .fillMaxSize()
@@ -113,7 +135,7 @@ fun AdminAuthGate(
                 Column(
                     modifier = Modifier.padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.AdminPanelSettings,
@@ -127,7 +149,11 @@ fun AdminAuthGate(
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = "Iniciá sesión con la cuenta de Google autorizada para confirmar transferencias de Itaú Paraguay, gestionar stock y ver métricas de ventas.",
+                        text = if (hasSavedSession) {
+                            "Sesión vinculada (${user?.email ?: "Admin"}). Desbloqueá con Face ID / Biometría o cambiá de cuenta con Google o Apple."
+                        } else {
+                            "Iniciá sesión con Google, Apple o Face ID / Biometría para confirmar transferencias Itaú, gestionar stock y ver métricas."
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -143,6 +169,36 @@ fun AdminAuthGate(
                     }
 
                     Spacer(Modifier.height(4.dp))
+
+                    BiometricSignInActionButton(
+                        label = if (hasSavedSession) {
+                            "Desbloquear con Face ID / Biometría"
+                        } else {
+                            "Iniciar con Face ID / Biometría"
+                        },
+                        isLoading = isSigningIn,
+                        onClick = {
+                            authError = null
+                            if (!hasSavedSession) {
+                                authError = if (canUseBiometricAuth(context)) {
+                                    "Iniciá sesión una primera vez con Google o Apple y tocá el ícono de candado/rostro arriba para vincular Face ID / Biometría."
+                                } else {
+                                    "Configurá reconocimiento facial o huella en los ajustes de tu teléfono e iniciá sesión primero con Google o Apple."
+                                }
+                            } else {
+                                launchBiometricAuth(
+                                    context = context,
+                                    onSuccess = {
+                                        authError = null
+                                        isBiometricUnlocked = true
+                                    },
+                                    onError = { msg -> authError = msg },
+                                    onCancelled = {}
+                                )
+                            }
+                        }
+                    )
+
                     GoogleSignInActionButton(
                         isLoading = isSigningIn,
                         onClick = {
@@ -153,6 +209,7 @@ fun AdminAuthGate(
                                 credentialManager = credentialManager,
                                 onAuthSuccess = {
                                     isSigningIn = false
+                                    isBiometricUnlocked = true
                                     currentUser = Firebase.auth.currentUser
                                 },
                                 onAuthError = { msg ->
@@ -166,6 +223,49 @@ fun AdminAuthGate(
                             )
                         }
                     )
+
+                    AppleSignInActionButton(
+                        isLoading = isSigningIn,
+                        onClick = {
+                            authError = null
+                            isSigningIn = true
+                            onAppleSignInClicked(
+                                context = context,
+                                onAuthSuccess = {
+                                    isSigningIn = false
+                                    isBiometricUnlocked = true
+                                    currentUser = Firebase.auth.currentUser
+                                },
+                                onAuthError = { msg ->
+                                    isSigningIn = false
+                                    authError = msg
+                                },
+                                scope = scope,
+                                onAuthCancelled = {
+                                    isSigningIn = false
+                                }
+                            )
+                        }
+                    )
+
+                    if (hasSavedSession) {
+                        OutlinedButton(
+                            onClick = {
+                                setBiometricLockEnabled(context, false)
+                                biometricLockEnabled = false
+                                isBiometricUnlocked = false
+                                signOutAdmin(credentialManager, scope) {
+                                    currentUser = null
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("admin_locked_signout")
+                        ) {
+                            Text("Cerrar sesión actual")
+                        }
+                    }
                 }
             }
         }
@@ -236,7 +336,43 @@ fun AdminAuthGate(
             AdminDashboardScreen(
                 viewModel = adminViewModel,
                 adminEmail = user.email ?: "Admin",
+                isBiometricEnabled = biometricLockEnabled,
+                onToggleBiometricLock = {
+                    if (!biometricLockEnabled) {
+                        if (!canUseBiometricAuth(context)) {
+                            Toast.makeText(
+                                context,
+                                "Configurá rostro o huella en tu teléfono para activar este bloqueo.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            launchBiometricAuth(
+                                context = context,
+                                title = "Activar Face ID / Biometría",
+                                subtitle = "Confirmá tu identidad para proteger el Panel Admin",
+                                onSuccess = {
+                                    setBiometricLockEnabled(context, true)
+                                    biometricLockEnabled = true
+                                    isBiometricUnlocked = true
+                                    Toast.makeText(
+                                        context,
+                                        "Desbloqueo con Face ID / Biometría activado.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                onError = { msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                    } else {
+                        isBiometricUnlocked = false
+                    }
+                },
                 onSignOut = {
+                    setBiometricLockEnabled(context, false)
+                    biometricLockEnabled = false
+                    isBiometricUnlocked = false
                     signOutAdmin(credentialManager, scope) {
                         currentUser = null
                     }

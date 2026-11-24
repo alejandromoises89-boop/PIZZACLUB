@@ -6,8 +6,8 @@
   <meta name="robots" content="noindex, nofollow" />
   <meta name="theme-color" content="#171411" />
   <title>Admin Pizza Club — Gestión de Pedidos y Confirmación de Pagos</title>
-  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-  <script src="/firebase-config.js" defer></script>
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <script src="./firebase-config.js" defer></script>
   <style>
     :root {
       --primary: #C83D2D;
@@ -174,36 +174,62 @@
         <strong style="font-size:18px;color:var(--gold)">🍕 Admin Pizza Club</strong>
         <div id="admin-user-label" style="font-size:12px;opacity:.85">Acceso exclusivo del propietario</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <a class="btn btn-light" href="/" style="min-height:38px;padding:7px 12px;font-size:13px">Ver Tienda Cliente</a>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <a class="btn btn-light" href="./" style="min-height:38px;padding:7px 12px;font-size:13px">Ver Tienda Cliente</a>
+        <button id="faceid-setup-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="handleTopbarFaceIdAction()">🧬 Activar Face ID</button>
         <button id="signout-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="handleSignOut()">Cerrar sesión</button>
       </div>
     </div>
   </header>
 
   <main class="container">
-    <!-- Missing Firebase Web Config State -->
+    <!-- Missing or Placeholder Firebase Web Config State -->
     <section id="config-missing-view" class="card" style="display:none">
-      <h2 style="margin-top:0">Falta configurar Firebase Web (`firebase-config.js`)</h2>
+      <h2 style="margin-top:0">Configurá <code>web-pwa/firebase-config.js</code> para sincronización en la nube</h2>
       <p style="font-size:14px;color:var(--muted);line-height:1.5">
-        Para conectar el panel web directamente con la colección <code>orders</code> de Firestore, creá <code>web-pwa/firebase-config.js</code> a partir de <code>web-pwa/firebase-config.example.js</code> con las credenciales de tu proyecto <code>gen-lang-client-0684931110</code> (comando: <code>firebase apps:sdkconfig web</code>).
+        Ya incluimos la plantilla <code>web-pwa/firebase-config.js</code> en el proyecto, pero todavía tiene claves de ejemplo (<code>YOUR_FIREBASE_*</code>). Seguí estos pasos para conectar pedidos y confirmación de pagos en tiempo real con Firestore:
       </p>
+      <ol style="font-size:13px;color:var(--dark);line-height:1.6;padding-left:20px;margin:10px 0 14px">
+        <li>Abrí <strong>Firebase Console</strong> (proyecto <code>gen-lang-client-0684931110</code>) → <em>Configuración del proyecto → Tus apps → Web</em> (o ejecutá <code>firebase apps:sdkconfig web --project gen-lang-client-0684931110</code>).</li>
+        <li>En <code>web-pwa/firebase-config.js</code>, reemplazá <code>YOUR_FIREBASE_WEB_API_KEY</code>, <code>YOUR_FIREBASE_MESSAGING_SENDER_ID</code> y <code>YOUR_FIREBASE_WEB_APP_ID</code> (dejando intacto <code>PIZZA_CLUB_DATABASE_ID</code>).</li>
+        <li>Si desplegás desde GitHub Actions, pegá ese archivo completo en el secreto de repositorio <strong><code>FIREBASE_CONFIG_JS</code></strong>.</li>
+        <li>En <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, agregá tu dominio web (ej. <code>tu-usuario.github.io</code>) para habilitar el acceso con Google (<code>alejandromoises89@gmail.com</code>).</li>
+      </ol>
       <p style="font-size:13px;color:var(--muted);margin-bottom:0">
-        Mientras tanto, podés seguir usando la pestaña <strong>Admin</strong> directamente desde la app Android ya vinculada a Firebase.
+        Mientras tanto, la tienda cliente funciona en modo local (<code>localStorage</code> + WhatsApp) y también podés operar <strong>Admin</strong> desde la app Android ya vinculada a Firebase.
       </p>
     </section>
 
-    <!-- Google Sign-In Gate -->
+    <!-- Multi-Provider Admin Auth Gate (Face ID / Google / Apple) -->
     <section id="login-view" class="card" style="display:none;max-width:440px;margin:28px auto;text-align:center;padding:28px 20px">
       <div style="font-size:40px;margin-bottom:8px">🔐</div>
       <h2 style="margin:0 0 8px">Panel Administrativo</h2>
-      <p style="font-size:14px;color:var(--muted);margin:0 0 18px">
-        Iniciá sesión con la cuenta de Google autorizada (<code>alejandromoises89@gmail.com</code>) para leer pedidos entrantes en vivo y confirmar pagos.
+      <p id="login-subtitle" style="font-size:14px;color:var(--muted);margin:0 0 18px">
+        Iniciá sesión con <strong>Google</strong>, <strong>Apple</strong> o <strong>Face ID / Biometría</strong> (<code>alejandromoises89@gmail.com</code>) para confirmar pagos y gestionar pedidos.
       </p>
       <div id="login-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:12px"></div>
-      <button id="google-signin-btn" class="btn btn-primary" style="width:100%" onclick="handleGoogleSignIn()">
-        Iniciar sesión con Google
-      </button>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button id="faceid-signin-btn" class="btn btn-outline" style="width:100%" onclick="handleFaceIdSignIn()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 20h2a2 2 0 0 0 2-2v-2"/><path d="M9 10v1"/><path d="M15 10v1"/><path d="M12 10v3h-1"/><path d="M9 16c1.5 1 4.5 1 6 0"/>
+          </svg>
+          <span id="faceid-btn-label">Iniciar con Face ID / Biometría</span>
+        </button>
+
+        <button id="google-signin-btn" class="btn btn-primary" style="width:100%" onclick="handleGoogleSignIn()">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="#fff" d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27 3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10 5.35 0 9.25-3.67 9.25-9.09 0-1.15-.15-1.81-.15-1.81z"/>
+          </svg>
+          Continuar con Google
+        </button>
+
+        <button id="apple-signin-btn" class="btn" style="width:100%;background:#111111;color:#FFFFFF" onclick="handleAppleSignIn()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.287-1.82-2.323-4.63-2.323-7.28 0-4.28 2.797-6.55 5.552-6.55 1.448 0 2.675.95 3.6.95.865 0 2.222-1.01 3.902-1.01.613 0 2.886.06 4.374 2.19-.13.09-2.383 1.37-2.383 4.19 0 3.26 2.854 4.42 2.955 4.45z"/>
+          </svg>
+          Continuar con Apple
+        </button>
+      </div>
     </section>
 
     <!-- Unauthorized Account View -->
@@ -308,23 +334,211 @@
       renderDashboard();
     };
 
+    const FACEID_CRED_KEY = "pizza_club_admin_webauthn_cred_v1";
+    const FACEID_LOCK_KEY = "pizza_club_admin_faceid_locked_v1";
+    let faceIdUnlockedThisTab = localStorage.getItem(FACEID_LOCK_KEY) !== "true";
+
+    function bufToBase64Url(buf) {
+      const bytes = new Uint8Array(buf);
+      let str = "";
+      bytes.forEach((b) => { str += String.fromCharCode(b); });
+      return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    }
+
+    function base64UrlToBuf(b64) {
+      const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+      const bin = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes.buffer;
+    }
+
+    function getEnrolledFaceId() {
+      try {
+        const raw = localStorage.getItem(FACEID_CRED_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function updateFaceIdUiState(user) {
+      const topBtn = document.getElementById("faceid-setup-btn");
+      const loginBtnLabel = document.getElementById("faceid-btn-label");
+      const loginSub = document.getElementById("login-subtitle");
+      const enrolled = getEnrolledFaceId();
+      if (topBtn) {
+        if (user && window.PublicKeyCredential) {
+          topBtn.style.display = "inline-flex";
+          topBtn.textContent = enrolled ? "🔒 Bloquear (Face ID)" : "🧬 Activar Face ID";
+        } else {
+          topBtn.style.display = "none";
+        }
+      }
+      if (loginBtnLabel) {
+        loginBtnLabel.textContent = (user && enrolled)
+          ? "Desbloquear con Face ID / Biometría"
+          : "Iniciar con Face ID / Biometría";
+      }
+      if (loginSub) {
+        loginSub.innerHTML = (user && enrolled)
+          ? `Sesión vinculada (<code>${esc(user.email || user.uid)}</code>). Desbloqueá con <strong>Face ID / Biometría</strong> o cambiá de cuenta con Google o Apple.`
+          : `Iniciá sesión con <strong>Google</strong>, <strong>Apple</strong> o <strong>Face ID / Biometría</strong> (<code>alejandromoises89@gmail.com</code>) para confirmar pagos y gestionar pedidos.`;
+      }
+    }
+
+    function setAuthButtonsDisabled(disabled) {
+      ["google-signin-btn", "apple-signin-btn", "faceid-signin-btn"].forEach((id) => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = disabled;
+      });
+    }
+
     window.handleGoogleSignIn = async function () {
       if (!fb) return;
       const errEl = document.getElementById("login-error");
       errEl.style.display = "none";
-      const btn = document.getElementById("google-signin-btn");
-      btn.disabled = true;
+      setAuthButtonsDisabled(true);
       try {
+        faceIdUnlockedThisTab = true;
+        localStorage.setItem(FACEID_LOCK_KEY, "false");
         await fb.signInWithPopup(fb.auth, fb.provider);
       } catch (err) {
         if (err && (err.code === "auth/popup-blocked" || err.code === "auth/operation-not-supported-in-this-environment")) {
           await fb.signInWithRedirect(fb.auth, fb.provider);
           return;
         }
-        errEl.textContent = "No se pudo iniciar sesión: " + (err?.message || "Error");
+        errEl.textContent = "No se pudo iniciar sesión con Google: " + (err?.message || "Error");
         errEl.style.display = "block";
       } finally {
-        btn.disabled = false;
+        setAuthButtonsDisabled(false);
+      }
+    };
+
+    window.handleAppleSignIn = async function () {
+      if (!fb) return;
+      const errEl = document.getElementById("login-error");
+      errEl.style.display = "none";
+      setAuthButtonsDisabled(true);
+      try {
+        faceIdUnlockedThisTab = true;
+        localStorage.setItem(FACEID_LOCK_KEY, "false");
+        await fb.signInWithPopup(fb.auth, fb.appleProvider);
+      } catch (err) {
+        if (err && (err.code === "auth/popup-blocked" || err.code === "auth/operation-not-supported-in-this-environment")) {
+          await fb.signInWithRedirect(fb.auth, fb.appleProvider);
+          return;
+        }
+        if (err && err.code === "auth/operation-not-allowed") {
+          errEl.textContent = "Activá el proveedor Apple en Firebase Console → Authentication → Sign-in method para ingresar con Apple Account.";
+        } else {
+          errEl.textContent = "No se pudo iniciar sesión con Apple: " + (err?.message || "Error");
+        }
+        errEl.style.display = "block";
+      } finally {
+        setAuthButtonsDisabled(false);
+      }
+    };
+
+    window.handleFaceIdSignIn = async function () {
+      const errEl = document.getElementById("login-error");
+      errEl.style.display = "none";
+      if (!window.PublicKeyCredential) {
+        errEl.textContent = "Este navegador no soporta WebAuthn / Face ID. Usá Google o Apple.";
+        errEl.style.display = "block";
+        return;
+      }
+      const enrolled = getEnrolledFaceId();
+      if (!currentUser || !enrolled) {
+        errEl.textContent = "Para usar Face ID / Biometría primero iniciá sesión una vez con Google o Apple y tocá 'Activar Face ID' en la barra superior.";
+        errEl.style.display = "block";
+        return;
+      }
+      setAuthButtonsDisabled(true);
+      try {
+        const challenge = new Uint8Array(32);
+        crypto.getRandomValues(challenge);
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge,
+            allowCredentials: [{ id: base64UrlToBuf(enrolled.credId), type: "public-key" }],
+            userVerification: "required",
+            timeout: 60000
+          }
+        });
+        if (!assertion) throw new Error("Verificación cancelada.");
+        const clientData = JSON.parse(new TextDecoder().decode(assertion.response.clientDataJSON));
+        if (clientData.challenge !== bufToBase64Url(challenge.buffer)) {
+          throw new Error("Desafío biométrico inválido.");
+        }
+        faceIdUnlockedThisTab = true;
+        localStorage.setItem(FACEID_LOCK_KEY, "false");
+        await window.evaluateAuthGate(currentUser);
+        showToast("🔓 Panel desbloqueado con Face ID / Biometría");
+      } catch (err) {
+        errEl.textContent = "No se pudo verificar Face ID / Biometría: " + (err?.message || "Cancelado");
+        errEl.style.display = "block";
+      } finally {
+        setAuthButtonsDisabled(false);
+      }
+    };
+
+    window.handleTopbarFaceIdAction = async function () {
+      if (!currentUser) return;
+      const enrolled = getEnrolledFaceId();
+      if (enrolled) {
+        if (unsubOrders) { unsubOrders(); unsubOrders = null; }
+        if (unsubInventory) { unsubInventory(); unsubInventory = null; }
+        faceIdUnlockedThisTab = false;
+        localStorage.setItem(FACEID_LOCK_KEY, "true");
+        updateFaceIdUiState(currentUser);
+        showSection("login-view");
+        showToast("🔒 Panel bloqueado con Face ID");
+        return;
+      }
+      if (!window.PublicKeyCredential) {
+        alert("Este dispositivo/navegador no admite Face ID / WebAuthn.");
+        return;
+      }
+      try {
+        const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (!available) {
+          alert("Activá Face ID, Touch ID o huella en tu teléfono para vincular este método.");
+          return;
+        }
+        const challenge = new Uint8Array(32);
+        crypto.getRandomValues(challenge);
+        const userBytes = new TextEncoder().encode(currentUser.uid);
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            challenge,
+            rp: { name: "Pizza Club Admin", id: location.hostname },
+            user: {
+              id: userBytes,
+              name: currentUser.email || currentUser.uid,
+              displayName: currentUser.displayName || "Admin Pizza Club"
+            },
+            pubKeyCredParams: [
+              { type: "public-key", alg: -7 },
+              { type: "public-key", alg: -257 }
+            ],
+            authenticatorSelection: {
+              authenticatorAttachment: "platform",
+              userVerification: "required"
+            },
+            timeout: 60000
+          }
+        });
+        if (!credential) return;
+        localStorage.setItem(FACEID_CRED_KEY, JSON.stringify({
+          credId: bufToBase64Url(credential.rawId),
+          email: currentUser.email || ""
+        }));
+        localStorage.setItem(FACEID_LOCK_KEY, "false");
+        updateFaceIdUiState(currentUser);
+        showToast("✅ Face ID / Biometría vinculado para próximos ingresos");
+      } catch (err) {
+        alert("No se pudo activar Face ID: " + (err?.message || err));
       }
     };
 
@@ -332,6 +546,8 @@
       if (!fb) return;
       if (unsubOrders) { unsubOrders(); unsubOrders = null; }
       if (unsubInventory) { unsubInventory(); unsubInventory = null; }
+      localStorage.removeItem(FACEID_LOCK_KEY);
+      faceIdUnlockedThisTab = true;
       await fb.signOut(fb.auth);
     };
 
@@ -658,16 +874,25 @@
       );
     }
 
+    function isValidFirebaseConfig(cfg) {
+      if (!cfg || typeof cfg !== "object") return false;
+      const required = [cfg.apiKey, cfg.projectId, cfg.appId];
+      return required.every((val) => {
+        const s = String(val || "").trim();
+        return s.length > 0 && !/YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_/i.test(s);
+      });
+    }
+
     async function boot() {
       const cfg = window.PIZZA_CLUB_FIREBASE_CONFIG;
-      if (!cfg || !cfg.apiKey || !cfg.projectId) {
+      if (!isValidFirebaseConfig(cfg)) {
         showSection("config-missing-view");
         return;
       }
 
       const [
         { initializeApp },
-        { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged },
+        { getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged },
         { getFirestore, collection, doc, getDoc, query, orderBy, limit, onSnapshot, runTransaction, writeBatch, serverTimestamp }
       ] = await Promise.all([
         import("https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js"),
@@ -678,13 +903,17 @@
       const app = initializeApp(cfg);
       const auth = getAuth(app);
       const provider = new GoogleAuthProvider();
+      const appleProvider = new OAuthProvider("apple.com");
+      appleProvider.addScope("email");
+      appleProvider.addScope("name");
       const db = getFirestore(app, DATABASE_ID);
-      fb = { auth, provider, signInWithPopup, signInWithRedirect, signOut, db, collection, doc, getDoc, query, orderBy, limit, onSnapshot, runTransaction, writeBatch, serverTimestamp };
+      fb = { auth, provider, appleProvider, signInWithPopup, signInWithRedirect, signOut, db, collection, doc, getDoc, query, orderBy, limit, onSnapshot, runTransaction, writeBatch, serverTimestamp };
 
-      onAuthStateChanged(auth, async (user) => {
+      window.evaluateAuthGate = async function (user) {
         currentUser = user;
         const signOutBtn = document.getElementById("signout-btn");
         const userLabel = document.getElementById("admin-user-label");
+        updateFaceIdUiState(user);
 
         if (!user) {
           signOutBtn.style.display = "none";
@@ -703,8 +932,18 @@
           return;
         }
 
+        const enrolled = getEnrolledFaceId();
+        if (enrolled && !faceIdUnlockedThisTab) {
+          showSection("login-view");
+          return;
+        }
+
         showSection("dashboard-view");
         startLiveAdminStreams();
+      };
+
+      onAuthStateChanged(auth, (user) => {
+        window.evaluateAuthGate(user);
       });
     }
 
