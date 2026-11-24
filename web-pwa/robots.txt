@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin.html
+
+Sitemap: https://gen-lang-client-0684931110.web.app/sitemap.xml

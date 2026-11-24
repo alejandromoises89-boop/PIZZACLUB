@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="es-PY">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#171411" />
+  <title>Admin Pizza Club — Gestión de Pedidos y Confirmación de Pagos</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <script src="/firebase-config.js" defer></script>
+  <style>
+    :root {
+      --primary: #C83D2D;
+      --gold: #E7AD48;
+      --bg: #F5F2EC;
+      --surface: #FFFFFF;
+      --dark: #171411;
+      --muted: #665D54;
+      --outline: #D5CCC0;
+      --wa: #157A3D;
+      --wa-soft: #E5F6EC;
+      --amber: #A15C07;
+      --amber-soft: #FFF4E0;
+      --danger: #B3261E;
+      --danger-soft: #FCE8E6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--dark);
+      padding-bottom: 40px;
+    }
+    .topbar {
+      background: var(--dark);
+      color: #fff;
+      padding: 14px 16px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .topbar-inner {
+      max-width: 920px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .container { max-width: 920px; margin: 0 auto; padding: 16px; }
+    .card {
+      background: var(--surface);
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 14px;
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+    .kpi-label { font-size: 12px; color: var(--muted); font-weight: 600; }
+    .kpi-val { font-size: 22px; font-weight: 800; margin-top: 4px; }
+    .chips {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+      margin-bottom: 14px;
+    }
+    .chip {
+      border: 1px solid var(--outline);
+      background: var(--surface);
+      color: var(--dark);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .chip.active {
+      background: var(--dark);
+      color: #fff;
+      border-color: var(--dark);
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .badge-pending { background: var(--amber-soft); color: var(--amber); }
+    .badge-confirmed { background: var(--wa-soft); color: var(--wa); }
+    .badge-cancelled { background: var(--danger-soft); color: var(--danger); }
+    .btn {
+      min-height: 44px;
+      border: none;
+      border-radius: 12px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-decoration: none;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-confirm { background: #1F8A4C; color: #fff; }
+    .btn-outline { background: transparent; color: var(--dark); border: 1.5px solid var(--outline); }
+    .btn-danger { background: var(--danger-soft); color: var(--danger); }
+    .btn-light { background: rgba(255,255,255,0.14); color: #fff; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .actions-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .stock-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .stock-pill {
+      background: var(--surface);
+      border: 1px solid var(--outline);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--dark);
+      color: #fff;
+      padding: 12px 18px;
+      border-radius: 14px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+      display: none;
+      z-index: 50;
+      max-width: 92vw;
+    }
+    .toast.show { display: block; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <strong style="font-size:18px;color:var(--gold)">🍕 Admin Pizza Club</strong>
+        <div id="admin-user-label" style="font-size:12px;opacity:.85">Acceso exclusivo del propietario</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <a class="btn btn-light" href="/" style="min-height:38px;padding:7px 12px;font-size:13px">Ver Tienda Cliente</a>
+        <button id="signout-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="handleSignOut()">Cerrar sesión</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Missing Firebase Web Config State -->
+    <section id="config-missing-view" class="card" style="display:none">
+      <h2 style="margin-top:0">Falta configurar Firebase Web (`firebase-config.js`)</h2>
+      <p style="font-size:14px;color:var(--muted);line-height:1.5">
+        Para conectar el panel web directamente con la colección <code>orders</code> de Firestore, creá <code>web-pwa/firebase-config.js</code> a partir de <code>web-pwa/firebase-config.example.js</code> con las credenciales de tu proyecto <code>gen-lang-client-0684931110</code> (comando: <code>firebase apps:sdkconfig web</code>).
+      </p>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:0">
+        Mientras tanto, podés seguir usando la pestaña <strong>Admin</strong> directamente desde la app Android ya vinculada a Firebase.
+      </p>
+    </section>
+
+    <!-- Google Sign-In Gate -->
+    <section id="login-view" class="card" style="display:none;max-width:440px;margin:28px auto;text-align:center;padding:28px 20px">
+      <div style="font-size:40px;margin-bottom:8px">🔐</div>
+      <h2 style="margin:0 0 8px">Panel Administrativo</h2>
+      <p style="font-size:14px;color:var(--muted);margin:0 0 18px">
+        Iniciá sesión con la cuenta de Google autorizada (<code>alejandromoises89@gmail.com</code>) para leer pedidos entrantes en vivo y confirmar pagos.
+      </p>
+      <div id="login-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:12px"></div>
+      <button id="google-signin-btn" class="btn btn-primary" style="width:100%" onclick="handleGoogleSignIn()">
+        Iniciar sesión con Google
+      </button>
+    </section>
+
+    <!-- Unauthorized Account View -->
+    <section id="unauthorized-view" class="card" style="display:none;max-width:460px;margin:28px auto;text-align:center;padding:28px 20px">
+      <div style="font-size:40px;margin-bottom:8px">⛔</div>
+      <h2 style="margin:0 0 8px">Acceso Restringido</h2>
+      <p id="unauthorized-msg" style="font-size:14px;color:var(--muted);margin:0 0 18px"></p>
+      <button class="btn btn-outline" style="width:100%" onclick="handleSignOut()">Cerrar sesión y probar otra cuenta</button>
+    </section>
+
+    <!-- Authenticated Admin Dashboard -->
+    <section id="dashboard-view" style="display:none">
+      <div class="kpi-grid" id="kpi-grid"></div>
+
+      <h3 style="margin:4px 0 8px;font-size:15px;color:var(--muted)">Stock en vivo</h3>
+      <div class="stock-grid" id="stock-grid"></div>
+
+      <div class="chips" id="filter-chips">
+        <button class="chip active" data-filter="ALL" onclick="setFilter('ALL')">Todos</button>
+        <button class="chip" data-filter="PENDING_PAYMENT" onclick="setFilter('PENDING_PAYMENT')">Pendiente de pago</button>
+        <button class="chip" data-filter="PAYMENT_CONFIRMED" onclick="setFilter('PAYMENT_CONFIRMED')">Pago confirmado</button>
+        <button class="chip" data-filter="IN_PROGRESS" onclick="setFilter('IN_PROGRESS')">En preparación / Camino</button>
+        <button class="chip" data-filter="COMPLETED" onclick="setFilter('COMPLETED')">Completados</button>
+        <button class="chip" data-filter="CANCELLED" onclick="setFilter('CANCELLED')">Cancelados</button>
+      </div>
+
+      <div id="orders-list"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script type="module">
+    const BOOTSTRAP_ADMIN_EMAIL = "alejandromoises89@gmail.com";
+    const DATABASE_ID = window.PIZZA_CLUB_DATABASE_ID || "ai-studio-android-pizzaclu-26d3b8a1-697e-40e6-a619-f86f22ddfb34";
+
+    const STATUS_LABELS = {
+      PENDING_PAYMENT: { text: "Pendiente de pago", cls: "badge-pending" },
+      PAYMENT_CONFIRMED: { text: "Pago confirmado", cls: "badge-confirmed" },
+      PREPARING: { text: "En preparación", cls: "badge-confirmed" },
+      READY_FOR_PICKUP: { text: "Lista para retiro", cls: "badge-confirmed" },
+      OUT_FOR_DELIVERY: { text: "En camino", cls: "badge-confirmed" },
+      COMPLETED: { text: "Completado", cls: "badge-confirmed" },
+      CANCELLED: { text: "Cancelado", cls: "badge-cancelled" }
+    };
+
+    let fb = null;
+    let currentUser = null;
+    let currentFilter = "ALL";
+    let allOrders = [];
+    let inventoryRows = [];
+    let unsubOrders = null;
+    let unsubInventory = null;
+    let busyOrderId = null;
+
+    const fmt = (n) => "Gs. " + Number(n || 0).toLocaleString("es-PY");
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+
+    function showToast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => el.classList.remove("show"), 3500);
+    }
+
+    function showSection(id) {
+      ["config-missing-view", "login-view", "unauthorized-view", "dashboard-view"].forEach((s) => {
+        document.getElementById(s).style.display = s === id ? "block" : "none";
+      });
+    }
+
+    function formatTimestamp(ts) {
+      try {
+        const d = ts && typeof ts.toDate === "function" ? ts.toDate() : new Date(ts);
+        if (isNaN(d.getTime())) return "";
+        return d.toLocaleString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      } catch {
+        return "";
+      }
+    }
+
+    function normalizePyPhone(raw) {
+      const d = String(raw || "").replace(/\D/g, "");
+      if (d.startsWith("595")) return d;
+      if (d.startsWith("0")) return "595" + d.slice(1);
+      if (d.length >= 7 && d.length <= 9) return "595" + d;
+      return d;
+    }
+
+    function randomId(prefix) {
+      const bytes = new Uint8Array(10);
+      crypto.getRandomValues(bytes);
+      return prefix + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    window.setFilter = function (filter) {
+      currentFilter = filter;
+      document.querySelectorAll("#filter-chips .chip").forEach((c) => {
+        c.classList.toggle("active", c.dataset.filter === filter);
+      });
+      renderDashboard();
+    };
+
+    window.handleGoogleSignIn = async function () {
+      if (!fb) return;
+      const errEl = document.getElementById("login-error");
+      errEl.style.display = "none";
+      const btn = document.getElementById("google-signin-btn");
+      btn.disabled = true;
+      try {
+        await fb.signInWithPopup(fb.auth, fb.provider);
+      } catch (err) {
+        if (err && (err.code === "auth/popup-blocked" || err.code === "auth/operation-not-supported-in-this-environment")) {
+          await fb.signInWithRedirect(fb.auth, fb.provider);
+          return;
+        }
+        errEl.textContent = "No se pudo iniciar sesión: " + (err?.message || "Error");
+        errEl.style.display = "block";
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    window.handleSignOut = async function () {
+      if (!fb) return;
+      if (unsubOrders) { unsubOrders(); unsubOrders = null; }
+      if (unsubInventory) { unsubInventory(); unsubInventory = null; }
+      await fb.signOut(fb.auth);
+    };
+
+    window.confirmPayment = async function (orderId) {
+      if (!fb || !currentUser || busyOrderId) return;
+      const order = allOrders.find((o) => o.id === orderId);
+      if (!order) return;
+      if (!confirm(`¿Confirmar transferencia Itaú de ${fmt(order.totalAmountPyg)} para ${order.orderNumber}?\n\nEsto descontará el stock y actualizará el historial del cliente en tiempo real.`)) {
+        return;
+      }
+
+      busyOrderId = orderId;
+      renderDashboard();
+      try {
+        const { db, doc, runTransaction, serverTimestamp } = fb;
+        await runTransaction(db, async (tx) => {
+          const orderRef = doc(db, "orders", orderId);
+          const statusRef = doc(db, "order_status", orderId);
+          const orderSnap = await tx.get(orderRef);
+          if (!orderSnap.exists()) throw new Error("El pedido no existe.");
+          const data = orderSnap.data();
+          if (data.status !== "PENDING_PAYMENT") {
+            throw new Error(`El pedido ya está en estado ${data.status}.`);
+          }
+
+          const invUpdates = [];
+          for (const item of (data.items || [])) {
+            const prodId = item.productId;
+            const prodName = item.productName || prodId;
+            const qty = Number(item.quantity || 0);
+            if (!prodId || qty <= 0) continue;
+            const invRef = doc(db, "inventory", prodId);
+            const invSnap = await tx.get(invRef);
+            const currentStock = invSnap.exists() ? Number(invSnap.data().stock ?? 0) : 20;
+            const nextStock = currentStock - qty;
+            if (nextStock < 0) {
+              throw new Error(`Stock insuficiente para ${prodName} (disponible: ${currentStock}, requerido: ${qty}).`);
+            }
+            invUpdates.push({ invRef, prodName, nextStock });
+          }
+
+          for (const u of invUpdates) {
+            tx.set(u.invRef, {
+              productName: u.prodName,
+              stock: u.nextStock,
+              lowStockThreshold: 5,
+              updatedBy: currentUser.uid,
+              updatedAt: serverTimestamp()
+            });
+          }
+
+          tx.update(orderRef, {
+            status: "PAYMENT_CONFIRMED",
+            whatsappUnlocked: true,
+            paymentConfirmedAt: serverTimestamp(),
+            confirmedByAdminId: currentUser.uid,
+            confirmedByAdminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
+            updatedAt: serverTimestamp()
+          });
+
+          tx.update(statusRef, {
+            status: "PAYMENT_CONFIRMED",
+            whatsappUnlocked: true,
+            updatedAt: serverTimestamp()
+          });
+
+          const logRef = doc(db, "payment_audit_logs", randomId("log_"));
+          tx.set(logRef, {
+            orderId,
+            orderNumber: data.orderNumber || orderId,
+            adminId: currentUser.uid,
+            adminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
+            action: "CONFIRM_PAYMENT",
+            previousStatus: "PENDING_PAYMENT",
+            newStatus: "PAYMENT_CONFIRMED",
+            amountPyg: Number(data.totalAmountPyg || 0),
+            note: "Transferencia Itaú verificada desde Admin Web",
+            createdAt: serverTimestamp()
+          });
+        });
+
+        showToast(`✅ Pago confirmado para ${order.orderNumber}. El cliente ya lo ve en vivo.`);
+      } catch (err) {
+        alert("No se pudo confirmar el pago: " + (err?.message || err));
+      } finally {
+        busyOrderId = null;
+        renderDashboard();
+      }
+    };
+
+    window.advanceStatus = async function (orderId, nextStatus) {
+      if (!fb || !currentUser || busyOrderId) return;
+      const order = allOrders.find((o) => o.id === orderId);
+      if (!order) return;
+      busyOrderId = orderId;
+      renderDashboard();
+      try {
+        const { db, doc, writeBatch, serverTimestamp } = fb;
+        const batch = writeBatch(db);
+        batch.update(doc(db, "orders", orderId), {
+          status: nextStatus,
+          updatedAt: serverTimestamp()
+        });
+        batch.update(doc(db, "order_status", orderId), {
+          status: nextStatus,
+          whatsappUnlocked: true,
+          updatedAt: serverTimestamp()
+        });
+        batch.set(doc(db, "payment_audit_logs", randomId("log_")), {
+          orderId,
+          orderNumber: order.orderNumber || orderId,
+          adminId: currentUser.uid,
+          adminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
+          action: "STATUS_CHANGE",
+          previousStatus: order.status,
+          newStatus: nextStatus,
+          amountPyg: Number(order.totalAmountPyg || 0),
+          note: `Estado cambiado a ${STATUS_LABELS[nextStatus]?.text || nextStatus}`,
+          createdAt: serverTimestamp()
+        });
+        await batch.commit();
+        showToast(`Pedido ${order.orderNumber} actualizado a ${STATUS_LABELS[nextStatus]?.text || nextStatus}.`);
+      } catch (err) {
+        alert("No se pudo actualizar el estado: " + (err?.message || err));
+      } finally {
+        busyOrderId = null;
+        renderDashboard();
+      }
+    };
+
+    window.cancelOrder = async function (orderId) {
+      if (!fb || !currentUser || busyOrderId) return;
+      const order = allOrders.find((o) => o.id === orderId);
+      if (!order) return;
+      const reason = prompt(`Motivo de cancelación para ${order.orderNumber}:`, "No se verificó el depósito");
+      if (reason === null) return;
+      const cleanReason = reason.trim().slice(0, 200) || "Cancelado por el administrador";
+
+      busyOrderId = orderId;
+      renderDashboard();
+      try {
+        const { db, doc, writeBatch, serverTimestamp } = fb;
+        const batch = writeBatch(db);
+        batch.update(doc(db, "orders", orderId), {
+          status: "CANCELLED",
+          whatsappUnlocked: false,
+          cancellationReason: cleanReason,
+          updatedAt: serverTimestamp()
+        });
+        batch.update(doc(db, "order_status", orderId), {
+          status: "CANCELLED",
+          whatsappUnlocked: false,
+          updatedAt: serverTimestamp()
+        });
+        batch.set(doc(db, "payment_audit_logs", randomId("log_")), {
+          orderId,
+          orderNumber: order.orderNumber || orderId,
+          adminId: currentUser.uid,
+          adminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
+          action: "CANCEL_ORDER",
+          previousStatus: order.status,
+          newStatus: "CANCELLED",
+          amountPyg: Number(order.totalAmountPyg || 0),
+          note: cleanReason,
+          createdAt: serverTimestamp()
+        });
+        await batch.commit();
+        showToast(`Pedido ${order.orderNumber} cancelado.`);
+      } catch (err) {
+        alert("No se pudo cancelar: " + (err?.message || err));
+      } finally {
+        busyOrderId = null;
+        renderDashboard();
+      }
+    };
+
+    function renderDashboard() {
+      const pendingCount = allOrders.filter((o) => o.status === "PENDING_PAYMENT").length;
+      const confirmedOrders = allOrders.filter((o) => o.status !== "PENDING_PAYMENT" && o.status !== "CANCELLED");
+      const revenue = confirmedOrders.reduce((s, o) => s + Number(o.totalAmountPyg || 0), 0);
+
+      document.getElementById("kpi-grid").innerHTML = `
+        <div class="kpi-card">
+          <div class="kpi-label">Pendientes de confirmación</div>
+          <div class="kpi-val" style="color:${pendingCount > 0 ? "var(--amber)" : "var(--wa)"}">${pendingCount}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Pedidos confirmados</div>
+          <div class="kpi-val">${confirmedOrders.length}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Ingresos confirmados</div>
+          <div class="kpi-val" style="color:var(--primary)">${fmt(revenue)}</div>
+        </div>
+      `;
+
+      document.getElementById("stock-grid").innerHTML = inventoryRows.map((inv) => {
+        const low = Number(inv.stock) <= Number(inv.lowStockThreshold || 5);
+        return `<div class="stock-pill">
+          <strong>${esc(inv.productName || inv.id)}</strong>
+          <span style="font-weight:800;color:${low ? "var(--danger)" : "var(--wa)"}">${Number(inv.stock ?? 0)} u.</span>
+        </div>`;
+      }).join("");
+
+      const filtered = allOrders.filter((o) => {
+        if (currentFilter === "ALL") return true;
+        if (currentFilter === "IN_PROGRESS") {
+          return ["PREPARING", "READY_FOR_PICKUP", "OUT_FOR_DELIVERY"].includes(o.status);
+        }
+        return o.status === currentFilter;
+      });
+
+      const listEl = document.getElementById("orders-list");
+      if (filtered.length === 0) {
+        listEl.innerHTML = `<div class="card" style="text-align:center;color:var(--muted);padding:26px">No hay pedidos en esta categoría.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map((order) => {
+        const st = STATUS_LABELS[order.status] || STATUS_LABELS.PENDING_PAYMENT;
+        const isPending = order.status === "PENDING_PAYMENT";
+        const isBusy = busyOrderId === order.id;
+        const itemsHtml = (order.items || []).map((i) =>
+          `<div style="display:flex;justify-content:space-between;font-size:14px;padding:2px 0">
+            <span>${Number(i.quantity)}x ${esc(i.productName)}</span>
+            <strong>${fmt(i.lineTotalPyg)}</strong>
+          </div>`
+        ).join("");
+
+        let nextStatus = null;
+        if (order.status === "PAYMENT_CONFIRMED") nextStatus = "PREPARING";
+        else if (order.status === "PREPARING") nextStatus = order.fulfillmentType === "DELIVERY" ? "OUT_FOR_DELIVERY" : "READY_FOR_PICKUP";
+        else if (order.status === "READY_FOR_PICKUP" || order.status === "OUT_FOR_DELIVERY") nextStatus = "COMPLETED";
+
+        const waMsg = `🍕 *Pizza Club — ¡Pago Confirmado!*\nHola ${order.customerName}, confirmamos tu transferencia para el pedido *${order.orderNumber}* (${fmt(order.totalAmountPyg)}).\n\n✨ ¡Muchas gracias por tu preferencia!\n🎁 *P.D.:* Dentro de cada pizza hay un premio sorpresa. Escaneá el QR que viene en tu caja.`;
+        const waUrl = `https://wa.me/${normalizePyPhone(order.customerPhone)}?text=${encodeURIComponent(waMsg)}`;
+
+        const addressText = order.fulfillmentType === "DELIVERY"
+          ? `🛵 Delivery: ${esc(order.neighborhood || "")}, ${esc(order.streetAndNumber || "")}${order.deliveryReference ? " (" + esc(order.deliveryReference) + ")" : ""}`
+          : `🏪 Retiro en local: ${esc(order.pickupDate || order.desiredDate || "")} ${esc(order.pickupTime || "")}`;
+
+        return `<article class="card" style="${isPending ? "border:1.5px solid var(--gold)" : ""}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+            <div>
+              <strong style="font-size:17px">${esc(order.orderNumber)}</strong>
+              <div style="font-size:13px;color:var(--muted)">
+                ${esc(order.customerName)} · ${esc(order.customerPhone)} · ${formatTimestamp(order.createdAt)}
+              </div>
+            </div>
+            <span class="badge ${st.cls}">${st.text}</span>
+          </div>
+
+          <div style="font-size:13px;color:var(--primary);font-weight:700;margin:8px 0 4px">
+            ${esc(order.preparationMode)} · ${addressText}
+          </div>
+          ${order.additionalInstructions ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Nota: ${esc(order.additionalInstructions)}</div>` : ""}
+
+          <div style="background:#FAF7F2;border-radius:12px;padding:10px;margin:8px 0">
+            ${itemsHtml}
+            <div style="display:flex;justify-content:space-between;border-top:1px solid #E8E0D4;margin-top:6px;padding-top:6px;font-size:16px;font-weight:800">
+              <span>Total</span>
+              <span style="color:var(--primary)">${fmt(order.totalAmountPyg)}</span>
+            </div>
+          </div>
+
+          <div class="actions-row">
+            ${isPending ? `
+              <button class="btn btn-confirm" style="flex:1" ${isBusy ? "disabled" : ""} onclick="confirmPayment('${esc(order.id)}')">
+                ${isBusy ? "Procesando..." : "✅ CONFIRMAR PAGO"}
+              </button>
+              <button class="btn btn-danger" ${isBusy ? "disabled" : ""} onclick="cancelOrder('${esc(order.id)}')">Rechazar</button>
+            ` : ""}
+            ${!isPending && nextStatus ? `
+              <button class="btn btn-primary" style="flex:1" ${isBusy ? "disabled" : ""} onclick="advanceStatus('${esc(order.id)}', '${nextStatus}')">
+                Pasar a: ${STATUS_LABELS[nextStatus]?.text || nextStatus}
+              </button>
+            ` : ""}
+            ${!isPending && order.status !== "COMPLETED" && order.status !== "CANCELLED" ? `
+              <button class="btn btn-danger" ${isBusy ? "disabled" : ""} onclick="cancelOrder('${esc(order.id)}')">Cancelar</button>
+            ` : ""}
+            ${order.status !== "PENDING_PAYMENT" && order.status !== "CANCELLED" ? `
+              <a class="btn btn-outline" href="${waUrl}" target="_blank" rel="noopener">💬 Agradecer por WhatsApp</a>
+            ` : ""}
+          </div>
+        </article>`;
+      }).join("");
+    }
+
+    async function verifyAdminAccess(user) {
+      if (user.emailVerified && user.email && user.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL) {
+        return true;
+      }
+      try {
+        const snap = await fb.getDoc(fb.doc(fb.db, "administrators", user.uid));
+        return snap.exists() && snap.data().active === true;
+      } catch {
+        return false;
+      }
+    }
+
+    function startLiveAdminStreams() {
+      const { db, collection, query, orderBy, limit, onSnapshot } = fb;
+      if (unsubOrders) unsubOrders();
+      if (unsubInventory) unsubInventory();
+
+      unsubOrders = onSnapshot(
+        query(collection(db, "orders"), orderBy("createdAt", "desc"), limit(100)),
+        (snap) => {
+          allOrders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          renderDashboard();
+        },
+        (err) => {
+          showToast("Error leyendo pedidos: " + (err?.message || "Permisos"));
+        }
+      );
+
+      unsubInventory = onSnapshot(
+        collection(db, "inventory"),
+        (snap) => {
+          inventoryRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          renderDashboard();
+        },
+        () => {}
+      );
+    }
+
+    async function boot() {
+      const cfg = window.PIZZA_CLUB_FIREBASE_CONFIG;
+      if (!cfg || !cfg.apiKey || !cfg.projectId) {
+        showSection("config-missing-view");
+        return;
+      }
+
+      const [
+        { initializeApp },
+        { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged },
+        { getFirestore, collection, doc, getDoc, query, orderBy, limit, onSnapshot, runTransaction, writeBatch, serverTimestamp }
+      ] = await Promise.all([
+        import("https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js"),
+        import("https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js"),
+        import("https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js")
+      ]);
+
+      const app = initializeApp(cfg);
+      const auth = getAuth(app);
+      const provider = new GoogleAuthProvider();
+      const db = getFirestore(app, DATABASE_ID);
+      fb = { auth, provider, signInWithPopup, signInWithRedirect, signOut, db, collection, doc, getDoc, query, orderBy, limit, onSnapshot, runTransaction, writeBatch, serverTimestamp };
+
+      onAuthStateChanged(auth, async (user) => {
+        currentUser = user;
+        const signOutBtn = document.getElementById("signout-btn");
+        const userLabel = document.getElementById("admin-user-label");
+
+        if (!user) {
+          signOutBtn.style.display = "none";
+          userLabel.textContent = "Acceso exclusivo del propietario";
+          showSection("login-view");
+          return;
+        }
+
+        signOutBtn.style.display = "inline-flex";
+        userLabel.textContent = user.email || user.uid;
+
+        const isAdmin = await verifyAdminAccess(user);
+        if (!isAdmin) {
+          document.getElementById("unauthorized-msg").textContent = `La cuenta ${user.email || user.uid} no tiene permisos de administrador.`;
+          showSection("unauthorized-view");
+          return;
+        }
+
+        showSection("dashboard-view");
+        startLiveAdminStreams();
+      });
+    }
+
+    boot();
+  </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Pizza Club</string>
+    <string name="tagline_cde">Ciudad del Este · Alto Paraná</string>
+    <string name="nav_menu">Menú</string>
+    <string name="nav_orders">Mis Pedidos</string>
+    <string name="nav_admin">Admin</string>
+    <string name="admin_sign_in_title">Panel Administrativo</string>
+    <string name="admin_sign_in_subtitle">Acceso privado exclusivo para administradores de Pizza Club mediante Google Sign-In.</string>
+    <string name="sign_in_with_google">Iniciar sesión con Google</string>
+    <string name="confirm_payment_button">CONFIRMAR PAGO</string>
+    <string name="continue_whatsapp">Continuar por WhatsApp</string>
+    <string name="copy_alias">Copiar alias</string>
+    <string name="alias_copied">Alias copiado al portapapeles</string>
+</resources>
