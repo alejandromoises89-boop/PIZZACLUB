@@ -1228,18 +1228,36 @@
       activeListeners.set(orderId, unsub);
     }
 
+    const CONFIG_OVERRIDE_KEY = "pizza_club_firebase_config_override_v1";
+
     function isValidFirebaseConfig(cfg) {
       if (!cfg || typeof cfg !== "object") return false;
-      const required = [cfg.apiKey, cfg.projectId, cfg.appId];
-      return required.every((val) => {
-        const s = String(val || "").trim();
-        return s.length > 0 && !/YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_/i.test(s);
-      });
+      const apiKey = String(cfg.apiKey || "").trim();
+      const projectId = String(cfg.projectId || "").trim();
+      const appId = String(cfg.appId || "").trim();
+      const placeholderRe = /YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_|PEG[AÁ]|TU_/i;
+      if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(apiKey)) return false;
+      if (!projectId || placeholderRe.test(projectId)) return false;
+      if (appId && placeholderRe.test(appId)) return false;
+      return true;
+    }
+
+    function getEffectiveFirebaseConfig() {
+      try {
+        const raw = localStorage.getItem(CONFIG_OVERRIDE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (isValidFirebaseConfig(parsed)) return parsed;
+        }
+      } catch {
+        // Ignore invalid override
+      }
+      return window.PIZZA_CLUB_FIREBASE_CONFIG;
     }
 
     async function initFirebaseIfConfigured() {
       const syncBanner = document.getElementById("cloud-sync-status");
-      const cfg = window.PIZZA_CLUB_FIREBASE_CONFIG;
+      const cfg = getEffectiveFirebaseConfig();
       if (!isValidFirebaseConfig(cfg)) {
         syncBanner.innerHTML = `
           <div>✅ <strong>Modo listo para pedir activo:</strong> Tu historial, <strong>Pizza Club Points</strong> y cuenta regresiva se guardan automáticamente en este dispositivo con envío directo por WhatsApp.</div>

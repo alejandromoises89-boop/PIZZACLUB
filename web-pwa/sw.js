@@ -1,4 +1,4 @@
-const CACHE_NAME = "pizza-club-pwa-v6";
+const CACHE_NAME = "pizza-club-pwa-v7";
 const SHELL_ASSETS = [
   "./",
   "./index.html",

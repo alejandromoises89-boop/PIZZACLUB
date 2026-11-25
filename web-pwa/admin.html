@@ -185,19 +185,26 @@
   <main class="container">
     <!-- Missing or Placeholder Firebase Web Config State -->
     <section id="config-missing-view" class="card" style="display:none">
-      <h2 style="margin-top:0">Configurá <code>web-pwa/firebase-config.js</code> para sincronización en la nube</h2>
+      <h2 style="margin-top:0">Configurá Firebase Web para el Panel Admin</h2>
       <p style="font-size:14px;color:var(--muted);line-height:1.5">
-        Ya incluimos la plantilla <code>web-pwa/firebase-config.js</code> en el proyecto, pero todavía tiene claves de ejemplo (<code>YOUR_FIREBASE_*</code>). Seguí estos pasos para conectar pedidos y confirmación de pagos en tiempo real con Firestore:
+        Pegá abajo el bloque <code>firebaseConfig</code> de tu App Web en <strong>Firebase Console</strong> (proyecto <code>gen-lang-client-0684931110</code> → <em>Configuración → Tus apps → Web</em>) para conectarte sin editar archivos:
       </p>
-      <ol style="font-size:13px;color:var(--dark);line-height:1.6;padding-left:20px;margin:10px 0 14px">
-        <li>Abrí <strong>Firebase Console</strong> (proyecto <code>gen-lang-client-0684931110</code>) → <em>Configuración del proyecto → Tus apps → Web</em> (o ejecutá <code>firebase apps:sdkconfig web --project gen-lang-client-0684931110</code>).</li>
-        <li>En <code>web-pwa/firebase-config.js</code>, reemplazá <code>YOUR_FIREBASE_WEB_API_KEY</code>, <code>YOUR_FIREBASE_MESSAGING_SENDER_ID</code> y <code>YOUR_FIREBASE_WEB_APP_ID</code> (dejando intacto <code>PIZZA_CLUB_DATABASE_ID</code>).</li>
-        <li>Si desplegás desde GitHub Actions, pegá ese archivo completo en el secreto de repositorio <strong><code>FIREBASE_CONFIG_JS</code></strong>.</li>
-        <li>En <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, agregá tu dominio web (ej. <code>tu-usuario.github.io</code>) para habilitar el acceso con Google (<code>alejandromoises89@gmail.com</code>).</li>
+      <textarea id="firebase-paste-input" rows="7" style="width:100%;padding:12px;border-radius:12px;border:1px solid var(--outline);font-family:monospace;font-size:12px;margin-bottom:10px" placeholder='const firebaseConfig = {
+  apiKey: "AIzaSy...",
+  authDomain: "gen-lang-client-0684931110.firebaseapp.com",
+  projectId: "gen-lang-client-0684931110",
+  storageBucket: "gen-lang-client-0684931110.firebasestorage.app",
+  messagingSenderId: "573144896313",
+  appId: "1:573144896313:web:..."
+};'></textarea>
+      <div id="firebase-paste-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        <button class="btn btn-primary" style="flex:1" onclick="savePastedFirebaseConfig()">Guardar y conectar</button>
+        <button class="btn btn-outline" onclick="clearSavedFirebaseConfig()">Restablecer</button>
+      </div>
+      <ol style="font-size:13px;color:var(--dark);line-height:1.6;padding-left:20px;margin:0">
+        <li>En <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, agregá tu dominio web (<code id="current-domain-hint">tu-usuario.github.io</code>) para habilitar el acceso con Google (<code>alejandromoises89@gmail.com</code>).</li>
       </ol>
-      <p style="font-size:13px;color:var(--muted);margin-bottom:0">
-        Mientras tanto, la tienda cliente funciona en modo local (<code>localStorage</code> + WhatsApp) y también podés operar <strong>Admin</strong> desde la app Android ya vinculada a Firebase.
-      </p>
     </section>
 
     <!-- Multi-Provider Admin Auth Gate (Face ID / Google / Apple) -->
@@ -207,7 +214,8 @@
       <p id="login-subtitle" style="font-size:14px;color:var(--muted);margin:0 0 18px">
         Iniciá sesión con <strong>Google</strong>, <strong>Apple</strong> o <strong>Face ID / Biometría</strong> (<code>alejandromoises89@gmail.com</code>) para confirmar pagos y gestionar pedidos.
       </p>
-      <div id="login-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:12px"></div>
+      <div id="login-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.45"></div>
+      <button id="fix-config-btn" class="btn btn-outline" style="display:none;width:100%;margin-bottom:12px" onclick="showConfigSetupView()">⚙️ Pegar / corregir configuración Web de Firebase</button>
       <div style="display:flex;flex-direction:column;gap:10px">
         <button id="faceid-signin-btn" class="btn btn-outline" style="width:100%" onclick="handleFaceIdSignIn()">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -394,10 +402,38 @@
       });
     }
 
+    function formatAuthError(err, providerLabel) {
+      const code = String(err?.code || "");
+      const msg = String(err?.message || "");
+      const fixBtn = document.getElementById("fix-config-btn");
+      if (
+        code === "auth/api-key-not-valid" ||
+        msg.includes("api-key-not-valid") ||
+        msg.includes("API_KEY_ANDROID_APP_RESTRICTED") ||
+        code === "auth/requests-from-referer" ||
+        msg.includes("requests-from-referer")
+      ) {
+        if (fixBtn) fixBtn.style.display = "inline-flex";
+        return "La clave Web (apiKey) de Firebase no es válida o está restringida para Web. Tocá el botón de abajo para pegar el firebaseConfig de tu App Web desde Firebase Console.";
+      }
+      if (code === "auth/unauthorized-domain") {
+        return `El dominio actual (${location.hostname}) no está autorizado en Firebase. Agregalo en Firebase Console → Authentication → Settings → Authorized domains.`;
+      }
+      if (code === "auth/popup-closed-by-user") {
+        return "Cerraste la ventana de inicio de sesión antes de terminar.";
+      }
+      if (code === "auth/operation-not-allowed") {
+        return `Activá el proveedor ${providerLabel} en Firebase Console → Authentication → Sign-in method.`;
+      }
+      return `No se pudo iniciar sesión con ${providerLabel}: ${msg || code || "Error"}`;
+    }
+
     window.handleGoogleSignIn = async function () {
       if (!fb) return;
       const errEl = document.getElementById("login-error");
+      const fixBtn = document.getElementById("fix-config-btn");
       errEl.style.display = "none";
+      if (fixBtn) fixBtn.style.display = "none";
       setAuthButtonsDisabled(true);
       try {
         faceIdUnlockedThisTab = true;
@@ -408,7 +444,7 @@
           await fb.signInWithRedirect(fb.auth, fb.provider);
           return;
         }
-        errEl.textContent = "No se pudo iniciar sesión con Google: " + (err?.message || "Error");
+        errEl.textContent = formatAuthError(err, "Google");
         errEl.style.display = "block";
       } finally {
         setAuthButtonsDisabled(false);
@@ -418,7 +454,9 @@
     window.handleAppleSignIn = async function () {
       if (!fb) return;
       const errEl = document.getElementById("login-error");
+      const fixBtn = document.getElementById("fix-config-btn");
       errEl.style.display = "none";
+      if (fixBtn) fixBtn.style.display = "none";
       setAuthButtonsDisabled(true);
       try {
         faceIdUnlockedThisTab = true;
@@ -429,11 +467,7 @@
           await fb.signInWithRedirect(fb.auth, fb.appleProvider);
           return;
         }
-        if (err && err.code === "auth/operation-not-allowed") {
-          errEl.textContent = "Activá el proveedor Apple en Firebase Console → Authentication → Sign-in method para ingresar con Apple Account.";
-        } else {
-          errEl.textContent = "No se pudo iniciar sesión con Apple: " + (err?.message || "Error");
-        }
+        errEl.textContent = formatAuthError(err, "Apple");
         errEl.style.display = "block";
       } finally {
         setAuthButtonsDisabled(false);
@@ -874,17 +908,77 @@
       );
     }
 
+    const CONFIG_OVERRIDE_KEY = "pizza_club_firebase_config_override_v1";
+
     function isValidFirebaseConfig(cfg) {
       if (!cfg || typeof cfg !== "object") return false;
-      const required = [cfg.apiKey, cfg.projectId, cfg.appId];
-      return required.every((val) => {
-        const s = String(val || "").trim();
-        return s.length > 0 && !/YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_/i.test(s);
-      });
+      const apiKey = String(cfg.apiKey || "").trim();
+      const projectId = String(cfg.projectId || "").trim();
+      const appId = String(cfg.appId || "").trim();
+      const placeholderRe = /YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_|PEG[AÁ]|TU_/i;
+      if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(apiKey)) return false;
+      if (!projectId || placeholderRe.test(projectId)) return false;
+      if (appId && placeholderRe.test(appId)) return false;
+      return true;
     }
 
+    function getEffectiveFirebaseConfig() {
+      try {
+        const raw = localStorage.getItem(CONFIG_OVERRIDE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (isValidFirebaseConfig(parsed)) return parsed;
+        }
+      } catch {
+        // Ignore invalid override
+      }
+      return window.PIZZA_CLUB_FIREBASE_CONFIG;
+    }
+
+    function parsePastedFirebaseSnippet(rawText) {
+      const text = String(rawText || "").trim();
+      const grab = (key) => {
+        const m = text.match(new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"']+)["']`));
+        return m ? m[1].trim() : "";
+      };
+      const cfg = {
+        apiKey: grab("apiKey"),
+        authDomain: grab("authDomain") || "gen-lang-client-0684931110.firebaseapp.com",
+        projectId: grab("projectId") || "gen-lang-client-0684931110",
+        storageBucket: grab("storageBucket") || "gen-lang-client-0684931110.firebasestorage.app",
+        messagingSenderId: grab("messagingSenderId") || "573144896313",
+        appId: grab("appId")
+      };
+      return cfg;
+    }
+
+    window.showConfigSetupView = function () {
+      showSection("config-missing-view");
+    };
+
+    window.savePastedFirebaseConfig = function () {
+      const input = document.getElementById("firebase-paste-input");
+      const errEl = document.getElementById("firebase-paste-error");
+      errEl.style.display = "none";
+      const parsed = parsePastedFirebaseSnippet(input?.value || "");
+      if (!isValidFirebaseConfig(parsed)) {
+        errEl.textContent = "No encontramos una apiKey válida (debe empezar con 'AIza...') en el texto pegado. Copiá el bloque completo firebaseConfig de Firebase Console.";
+        errEl.style.display = "block";
+        return;
+      }
+      localStorage.setItem(CONFIG_OVERRIDE_KEY, JSON.stringify(parsed));
+      location.reload();
+    };
+
+    window.clearSavedFirebaseConfig = function () {
+      localStorage.removeItem(CONFIG_OVERRIDE_KEY);
+      location.reload();
+    };
+
     async function boot() {
-      const cfg = window.PIZZA_CLUB_FIREBASE_CONFIG;
+      const domainHint = document.getElementById("current-domain-hint");
+      if (domainHint && location.hostname) domainHint.textContent = location.hostname;
+      const cfg = getEffectiveFirebaseConfig();
       if (!isValidFirebaseConfig(cfg)) {
         showSection("config-missing-view");
         return;
