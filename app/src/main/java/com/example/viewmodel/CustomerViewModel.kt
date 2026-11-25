@@ -9,26 +9,31 @@ import com.example.data.FulfillmentType
 import com.example.data.InventoryModel
 import com.example.data.LocalOrderStore
 import com.example.data.LocalSavedOrder
+import com.example.data.LoyaltyProgramState
 import com.example.data.OrderLineItem
+import com.example.data.OrderStatus
 import com.example.data.OrderStatusTrackerModel
-import com.example.data.PizzaClubAiRepository
 import com.example.data.PizzaClubRepository
 import com.example.data.PreparationMode
 import com.example.data.ProductModel
-import com.example.data.unwrapFirestoreMessage
-import com.google.firebase.firestore.FirebaseFirestoreException
+import com.example.data.RedeemedLoyaltyCoupon
+import com.example.data.StatusTransition
+import com.example.data.unwrapBackendMessage
+import com.example.notifications.OrderStatusNotifier
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -71,19 +76,13 @@ sealed interface CatalogUiState {
     data class Error(val message: String) : CatalogUiState
 }
 
-sealed interface AiRecommendationUiState {
-    data object Idle : AiRecommendationUiState
-    data object Loading : AiRecommendationUiState
-    data class Streaming(val text: String) : AiRecommendationUiState
-    data class Success(val text: String) : AiRecommendationUiState
-    data class Error(val message: String) : AiRecommendationUiState
-}
-
 @OptIn(ExperimentalCoroutinesApi::class)
 class CustomerViewModel(
     private val repository: PizzaClubRepository,
     private val localOrderStore: LocalOrderStore,
-    private val aiRepository: PizzaClubAiRepository = PizzaClubAiRepository()
+    private val orderStatusNotifier: OrderStatusNotifier = object : OrderStatusNotifier {
+        override fun notifyIfMilestone(transition: StatusTransition?) = Unit
+    }
 ) : ViewModel() {
 
     private val _cartQuantities = MutableStateFlow<Map<String, Int>>(emptyMap())
@@ -104,14 +103,18 @@ class CustomerViewModel(
 
     private var hasSyncedInitialHistory = false
 
-    private val _aiRecommendationState = MutableStateFlow<AiRecommendationUiState>(AiRecommendationUiState.Idle)
-    val aiRecommendationState: StateFlow<AiRecommendationUiState> = _aiRecommendationState.asStateFlow()
-
     val savedOrders: StateFlow<List<LocalSavedOrder>> = localOrderStore.savedOrdersFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000L),
             initialValue = emptyList()
+        )
+
+    val loyaltyState: StateFlow<LoyaltyProgramState> = localOrderStore.loyaltyStateFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = LoyaltyProgramState()
         )
 
     val pizzaClubPoints: StateFlow<Int> = localOrderStore.pointsBalanceFlow
@@ -121,7 +124,7 @@ class CustomerViewModel(
             initialValue = 0
         )
 
-    // Real-time tracker for the currently viewed customer order (updates automatically when Admin confirms payment)
+    // Real-time tracker for the currently viewed customer order (polls Supabase / reads local Room DB)
     val liveTrackedOrderStatus: StateFlow<OrderStatusTrackerModel?> = _selectedOrderId
         .flatMapLatest { orderId ->
             if (orderId.isNullOrBlank()) {
@@ -129,17 +132,20 @@ class CustomerViewModel(
             } else {
                 repository.observeOrderStatusTracker(orderId)
                     .catch { error ->
-                        val fsError = generateSequence(error) { it.cause }
-                            .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-                        if (fsError == null && error is CancellationException) throw error
-                        Log.w("CustomerVM", "Error observing order status $orderId", fsError ?: error)
+                        if (error is CancellationException) throw error
+                        Log.w("CustomerVM", "Error observing order status $orderId", error)
                         emit(null)
                     }
             }
         }
         .onEach { tracker ->
             if (tracker != null) {
-                localOrderStore.updateOrderStatus(tracker.id, tracker.status, tracker.whatsappUnlocked)
+                val transition = localOrderStore.updateOrderStatus(
+                    tracker.id,
+                    tracker.status,
+                    tracker.whatsappUnlocked
+                )
+                orderStatusNotifier.notifyIfMilestone(transition)
             }
         }
         .stateIn(
@@ -150,28 +156,22 @@ class CustomerViewModel(
 
     private val productsFlow = repository.observeProducts()
         .catch { error ->
-            val fsError = generateSequence(error) { it.cause }
-                .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-            if (fsError == null && error is CancellationException) throw error
-            Log.w("CustomerVM", "Using fallback products due to stream error", fsError ?: error)
+            if (error is CancellationException) throw error
+            Log.w("CustomerVM", "Using fallback products due to stream error", error)
             emit(DefaultCatalogDefaults.defaultProducts)
         }
 
     private val inventoryFlow = repository.observeInventory()
         .catch { error ->
-            val fsError = generateSequence(error) { it.cause }
-                .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-            if (fsError == null && error is CancellationException) throw error
-            Log.w("CustomerVM", "Using fallback inventory due to stream error", fsError ?: error)
+            if (error is CancellationException) throw error
+            Log.w("CustomerVM", "Using fallback inventory due to stream error", error)
             emit(DefaultCatalogDefaults.defaultInventory)
         }
 
     private val settingsFlow = repository.observeBusinessSettings()
         .catch { error ->
-            val fsError = generateSequence(error) { it.cause }
-                .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-            if (fsError == null && error is CancellationException) throw error
-            Log.w("CustomerVM", "Using fallback settings due to stream error", fsError ?: error)
+            if (error is CancellationException) throw error
+            Log.w("CustomerVM", "Using fallback settings due to stream error", error)
             emit(DefaultCatalogDefaults.defaultSettings)
         }
 
@@ -199,10 +199,8 @@ class CustomerViewModel(
             subtotalPyg = subtotal
         ) as CatalogUiState
     }.catch { error ->
-        val fsError = generateSequence(error) { it.cause }
-            .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-        if (fsError == null && error is CancellationException) throw error
-        emit(CatalogUiState.Error(unwrapFirestoreMessage(error, "Error al cargar el catálogo")))
+        if (error is CancellationException) throw error
+        emit(CatalogUiState.Error(unwrapBackendMessage(error, "Error al cargar el catálogo")))
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000L),
@@ -210,7 +208,6 @@ class CustomerViewModel(
     )
 
     init {
-        // Sync active order status and refresh full local order history once on load
         savedOrders.onEach { list ->
             if (_selectedOrderId.value == null && list.isNotEmpty()) {
                 _selectedOrderId.value = list.first().orderId
@@ -220,6 +217,24 @@ class CustomerViewModel(
                 refreshAllSavedOrdersStatus(list)
             }
         }.launchIn(viewModelScope)
+
+        viewModelScope.launch {
+            savedOrders
+                .map { list ->
+                    list.filter {
+                        it.status != OrderStatus.COMPLETED.rawValue &&
+                            it.status != OrderStatus.CANCELLED.rawValue
+                    }
+                }
+                .distinctUntilChangedBy { active -> active.map { it.orderId to it.status } }
+                .collectLatest { activeOrders ->
+                    if (activeOrders.isEmpty()) return@collectLatest
+                    while (true) {
+                        delay(6_000L)
+                        syncOrders(activeOrders)
+                    }
+                }
+        }
     }
 
     fun incrementQuantity(productId: String, availableStock: Long) {
@@ -243,71 +258,44 @@ class CustomerViewModel(
         _selectedOrderId.value = orderId
     }
 
+    fun redeemLoyaltyReward(onRedeemed: (RedeemedLoyaltyCoupon) -> Unit) {
+        viewModelScope.launch {
+            val redeemed = localOrderStore.redeemLoyaltyReward()
+            if (redeemed != null) {
+                onRedeemed(redeemed)
+            }
+        }
+    }
+
     fun refreshAllSavedOrdersStatus(ordersOverride: List<LocalSavedOrder>? = null) {
         val orders = ordersOverride ?: savedOrders.value
         if (orders.isEmpty()) return
         viewModelScope.launch {
             _isRefreshingHistory.value = true
             try {
-                for (saved in orders) {
-                    val tracker = repository.fetchOrderStatusOnce(saved.orderId)
-                    if (tracker != null) {
-                        localOrderStore.updateOrderStatus(tracker.id, tracker.status, tracker.whatsappUnlocked)
-                    }
-                }
+                syncOrders(orders)
             } finally {
                 _isRefreshingHistory.value = false
             }
         }
     }
 
-    fun clearSubmitError() {
-        _submitError.value = null
-    }
-
-    fun requestPizzaRecommendation(craving: String) {
-        val cleanCraving = craving.trim()
-        if (cleanCraving.isEmpty()) {
-            _aiRecommendationState.value = AiRecommendationUiState.Error("Contanos qué se te antoja para recomendarte.")
-            return
-        }
-        val ready = catalogState.value as? CatalogUiState.Ready
-        val flavorsSummary = ready?.items
-            ?.filter { it.stock > 0 }
-            ?.joinToString("\n") { "- ${it.product.name} (${it.stock} disp.): ${it.product.description}" }
-            ?: "Pepperoni, Mozzarella, Cuatro quesos, Pollo Catupiri"
-
-        viewModelScope.launch {
-            _aiRecommendationState.value = AiRecommendationUiState.Loading
-            val accumulated = StringBuilder()
-            try {
-                withTimeout(60_000L) {
-                    aiRepository.streamFlavorRecommendation(cleanCraving, flavorsSummary).collect { chunk ->
-                        accumulated.append(chunk)
-                        _aiRecommendationState.value = AiRecommendationUiState.Streaming(accumulated.toString())
-                    }
-                }
-                if (accumulated.isNotBlank()) {
-                    _aiRecommendationState.value = AiRecommendationUiState.Success(accumulated.toString().trim())
-                } else {
-                    _aiRecommendationState.value = AiRecommendationUiState.Error("Gemini no devolvió ninguna sugerencia.")
-                }
-            } catch (e: TimeoutCancellationException) {
-                Log.e("CustomerVM", "Gemini recommendation timed out", e)
-                _aiRecommendationState.value = AiRecommendationUiState.Error("La consulta tardó más de 60 segundos. Intentá nuevamente.")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e("CustomerVM", "Gemini recommendation failed", e)
-                _aiRecommendationState.value = AiRecommendationUiState.Error(
-                    e.localizedMessage ?: "No pudimos conectar con Gemini AI en este momento."
+    private suspend fun syncOrders(orders: List<LocalSavedOrder>) {
+        for (saved in orders) {
+            val tracker = repository.fetchOrderStatusOnce(saved.orderId)
+            if (tracker != null) {
+                val transition = localOrderStore.updateOrderStatus(
+                    tracker.id,
+                    tracker.status,
+                    tracker.whatsappUnlocked
                 )
+                orderStatusNotifier.notifyIfMilestone(transition)
             }
         }
     }
 
-    fun clearPizzaRecommendation() {
-        _aiRecommendationState.value = AiRecommendationUiState.Idle
+    fun clearSubmitError() {
+        _submitError.value = null
     }
 
     fun submitPreOrder(onOrderCreated: (String) -> Unit) {
@@ -329,7 +317,6 @@ class CustomerViewModel(
             _submitError.value = "Agregá al menos una pizza antes de continuar."
             return
         }
-        // Double check stock limits
         for (item in state.items) {
             if (item.cartQuantity > item.stock) {
                 _submitError.value = "La cantidad de ${item.product.name} supera el stock disponible (${item.stock})."
@@ -363,7 +350,7 @@ class CustomerViewModel(
                 _selectedOrderId.value = savedOrder.orderId
                 onOrderCreated(savedOrder.orderId)
             }.onFailure { error ->
-                _submitError.value = unwrapFirestoreMessage(error, "No se pudo registrar la preorden.")
+                _submitError.value = unwrapBackendMessage(error, "No se pudo registrar la preorden.")
             }
         }
     }

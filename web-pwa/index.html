@@ -6,7 +6,6 @@
   <title>Pizza Club | Pizzas Artesanales en Ciudad del Este — Pedido Online Sin Registro</title>
   <meta name="description" content="Pizza Club en Ciudad del Este, Alto Paraná, Paraguay. Pedí Pepperoni, Mozzarella, Cuatro Quesos o Pollo Catupiri (Gs. 50.000) listas para comer o para hornear en casa, sin registro. Seguinos en @Pizza.Club1." />
   <meta name="robots" content="index, follow, max-image-preview:large" />
-  <link rel="canonical" href="https://gen-lang-client-0684931110.web.app/" />
 
   <!-- Open Graph / Social Search Preview -->
   <meta property="og:type" content="restaurant" />
@@ -14,7 +13,6 @@
   <meta property="og:site_name" content="Pizza Club Ciudad del Este" />
   <meta property="og:title" content="Pizza Club — Pizzas Artesanales en Ciudad del Este" />
   <meta property="og:description" content="Pedí online sin registrarte: Pepperoni, Mozzarella, Cuatro Quesos y Pollo Catupiri a Gs. 50.000. Delivery o retiro en local. Dentro de cada pizza hay un premio sorpresa." />
-  <meta property="og:url" content="https://gen-lang-client-0684931110.web.app/" />
 
   <!-- Twitter / WhatsApp Link Preview -->
   <meta name="twitter:card" content="summary" />
@@ -38,7 +36,6 @@
     "@type": "Restaurant",
     "name": "Pizza Club",
     "description": "Pizzería artesanal de masa madre en Ciudad del Este, Alto Paraná, Paraguay. Pedidos online sin registro, listas para comer o para hornear en casa.",
-    "url": "https://gen-lang-client-0684931110.web.app/",
     "telephone": "+59593551936",
     "servesCuisine": "Pizza artesanal",
     "priceRange": "Gs. 50.000",
@@ -95,7 +92,6 @@
       "@type": "OrderAction",
       "target": {
         "@type": "EntryPoint",
-        "urlTemplate": "https://gen-lang-client-0684931110.web.app/",
         "actionPlatform": [
           "http://schema.org/DesktopWebPlatform",
           "http://schema.org/IOSPlatform",
@@ -106,8 +102,8 @@
   }
   </script>
 
-  <!-- Optional Firebase Web SDK configuration (when deployed with firebase-config.js) -->
-  <script src="./firebase-config.js" defer></script>
+  <!-- Configuración de base de datos online Supabase (sin Firebase) -->
+  <script src="./db-config.js" defer></script>
   <!-- Live Camera QR Scanner (html5-qrcode) -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 
@@ -209,7 +205,10 @@
     .btn.outline { background: transparent; color: var(--dark); border: 1.5px solid var(--outline); }
     .btn.sm { min-height: 40px; padding: 8px 12px; font-size: 13px; width: auto; }
     .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-    .field { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--outline); font-size: 15px; margin-bottom: 10px; }
+    .field { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--outline); font-size: 15px; margin-bottom: 10px; font-family: inherit; background: #fff; color: var(--dark); }
+    textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; margin-bottom: 6px; }
+    .field-label { display: block; font-size: 13px; font-weight: 700; color: var(--dark); margin: 4px 0 6px; }
+    .field-hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
     .status-badge {
       display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
       font-size: 12px; font-weight: 800;
@@ -310,6 +309,14 @@
       height: 100%; border-radius: 999px; background: var(--primary);
       transition: width 0.35s ease;
     }
+    .alerts-banner {
+      display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+      border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; font-size: 13px;
+      background: #FFF3D6; border: 1px solid rgba(181,107,0,0.35); color: #5C3D06;
+    }
+    .alerts-banner.active {
+      background: var(--wa-soft); border-color: rgba(31,138,76,0.35); color: #124D2B;
+    }
   </style>
 </head>
 <body>
@@ -403,6 +410,8 @@
         Comprobando conexión con el panel de Pizza Club...
       </div>
 
+      <div id="order-alerts-bar"></div>
+
       <div id="points-section"></div>
 
       <div id="history-list"></div>
@@ -442,7 +451,16 @@
       <div id="pickup-fields" style="display:none">
         <input class="field" id="cust-pickup-time" placeholder="Horario aproximado de retiro (Ej: 20:30)" />
       </div>
-      <input class="field" id="cust-notes" placeholder="Instrucciones adicionales (opcional)" />
+      <label for="cust-notes" class="field-label">Instrucciones de entrega o alérgenos (opcional)</label>
+      <textarea
+        class="field"
+        id="cust-notes"
+        rows="3"
+        maxlength="400"
+        oninput="updateNotesCharCount()"
+        placeholder="Ej: Dejar en portería, no tocar timbre, alergia a lácteos/frutos secos..."
+      ></textarea>
+      <div class="field-hint" id="cust-notes-count">0 / 400 caracteres · Se envía directo a cocina y reparto</div>
       <button id="submit-order-btn" class="btn" onclick="submitOrder()">Confirmar Preorden</button>
     </div>
   </div>
@@ -493,7 +511,61 @@
   <script type="module">
     const STORAGE_KEY = "pizza_club_order_history_v1";
     const POINTS_KEY = "pizza_club_points_v1";
-    const DATABASE_ID = window.PIZZA_CLUB_DATABASE_ID || "ai-studio-android-pizzaclu-26d3b8a1-697e-40e6-a619-f86f22ddfb34";
+    const DB_CONFIG_OVERRIDE_KEY = "pizza_club_db_config_v1";
+    const SYSTEM_LOGS_KEY = "pizza_club_system_logs_v1";
+    const NOTIFIED_TRANSITIONS_KEY = "pizza_club_notified_transitions_v1";
+    const ALERT_SOUND_MUTED_KEY = "pizza_club_alert_sound_muted_v1";
+    const ALERT_MILESTONE_STATUSES = new Set(["PAYMENT_CONFIRMED", "OUT_FOR_DELIVERY"]);
+
+    function buildDiagnosticHint(rawText) {
+      const s = String(rawText || "").toLowerCase();
+      if (/401|403|invalid api key|jwt|permission denied/.test(s)) {
+        return "Verificá la Anon Key de Supabase en Base Online y las políticas RLS de supabase_schema.sql.";
+      }
+      if (/404|pgrst205|does not exist|relation/.test(s)) {
+        return "Falta crear la tabla en Supabase: ejecutá supabase_schema.sql en el SQL Editor.";
+      }
+      if (/failed to fetch|networkerror|load failed|network|dns|err_name/.test(s)) {
+        return "Revisá tu conexión a internet o que la URL https://...supabase.co sea válida.";
+      }
+      if (/websocket|realtime/.test(s)) {
+        return "Verificá que Realtime esté habilitado para public.order_status en Supabase.";
+      }
+      if (/json|unexpected token/.test(s)) {
+        return "La respuesta no fue JSON válido; revisá que la URL de Supabase no apunte a una página HTML.";
+      }
+      return "";
+    }
+
+    function recordSystemLog(level, source, message, detail = "", endpoint = "") {
+      try {
+        const raw = localStorage.getItem(SYSTEM_LOGS_KEY);
+        const list = raw ? JSON.parse(raw) : [];
+        const safeList = Array.isArray(list) ? list : [];
+        const detailStr = detail ? String(detail?.message || detail).slice(0, 320) : "";
+        const entry = {
+          id: "slog_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+          ts: Date.now(),
+          level: level || "ERROR",
+          source: String(source || "Tienda").slice(0, 60),
+          message: String(message || "").slice(0, 220),
+          detail: detailStr,
+          endpoint: String(endpoint || "").slice(0, 120),
+          hint: level === "INFO" ? "" : buildDiagnosticHint(`${message} ${detailStr}`)
+        };
+        // Avoid flooding identical consecutive errors within 30s
+        const top = safeList[0];
+        if (top && top.level === entry.level && top.source === entry.source && top.message === entry.message && (entry.ts - top.ts) < 30000) {
+          top.ts = entry.ts;
+          top.detail = entry.detail || top.detail;
+        } else {
+          safeList.unshift(entry);
+        }
+        localStorage.setItem(SYSTEM_LOGS_KEY, JSON.stringify(safeList.slice(0, 80)));
+      } catch {
+        // Ignore storage quota issues cleanly
+      }
+    }
 
     const DEFAULT_PRODUCTS = [
       { id: "pepperoni", name: "Pepperoni", desc: "Salsa San Marzano, mozzarella fior di latte y pepperoni artesanal.", price: 50000, stock: 20 },
@@ -503,11 +575,17 @@
     ];
 
     let PRODUCTS = [...DEFAULT_PRODUCTS];
+    let BUSINESS_SETTINGS = {
+      whatsappNumber: "59593551936",
+      bankName: "Itaú Paraguay",
+      paymentAlias: "alejandromoises89@gmail.com"
+    };
     let prepMode = "Lista para comer";
     const cart = {};
     let selectedHistoryOrderId = null;
-    let firestoreApi = null; // { db, doc, getDoc, collection, getDocs, onSnapshot, writeBatch, serverTimestamp }
-    const activeListeners = new Map();
+    let supabaseCfg = null;
+    let statusPollTimer = null;
+    let alertAudioCtx = null;
 
     const fmt = (n) => "Gs. " + Number(n || 0).toLocaleString("es-PY");
 
@@ -518,6 +596,196 @@
       el.classList.add("show");
       clearTimeout(window.__pcToastTimer);
       window.__pcToastTimer = setTimeout(() => el.classList.remove("show"), 3200);
+    }
+
+    function isAlertSoundMuted() {
+      try {
+        return localStorage.getItem(ALERT_SOUND_MUTED_KEY) === "1";
+      } catch {
+        return false;
+      }
+    }
+
+    function getNotifiedTransitions() {
+      try {
+        const raw = localStorage.getItem(NOTIFIED_TRANSITIONS_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function hasNotifiedTransition(orderId, status) {
+      const key = `${orderId}:${status}`;
+      return getNotifiedTransitions().includes(key);
+    }
+
+    function markTransitionNotified(orderId, status) {
+      const key = `${orderId}:${status}`;
+      const list = getNotifiedTransitions().filter((x) => x !== key);
+      list.push(key);
+      try {
+        localStorage.setItem(NOTIFIED_TRANSITIONS_KEY, JSON.stringify(list.slice(-60)));
+      } catch {
+        // Ignore storage quota errors
+      }
+    }
+
+    function unlockAlertAudio() {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      if (!alertAudioCtx) {
+        alertAudioCtx = new Ctx();
+      }
+      if (alertAudioCtx.state === "suspended") {
+        alertAudioCtx.resume().catch(() => {});
+      }
+      return alertAudioCtx;
+    }
+
+    function playOrderAlertSound() {
+      if (isAlertSoundMuted()) return;
+      try {
+        const ctx = unlockAlertAudio();
+        if (!ctx) return;
+        const notes = [523.25, 659.25, 783.99]; // C5 -> E5 -> G5 bright kitchen/delivery chime
+        const now = ctx.currentTime;
+        notes.forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          const start = now + idx * 0.11;
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(freq, start);
+          gain.gain.setValueAtTime(0.001, start);
+          gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, start + 0.28);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(start);
+          osc.stop(start + 0.3);
+        });
+      } catch {
+        // Ignore audio errors when autoplay is blocked before user gesture
+      }
+    }
+
+    async function showLocalOrderNotification(order, newStatus) {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      const isConfirmed = newStatus === "PAYMENT_CONFIRMED";
+      const title = isConfirmed
+        ? `✅ ¡Pago confirmado! (${order.orderNumber})`
+        : `🛵 ¡Tu pizza va en camino! (${order.orderNumber})`;
+      const body = isConfirmed
+        ? "Verificamos tu transferencia. Tu pedido pasó a cocina y WhatsApp ya está habilitado."
+        : "Nuestro repartidor salió hacia tu dirección en Ciudad del Este.";
+      const options = {
+        body,
+        icon: "./icon-192.png",
+        badge: "./icon-192.png",
+        tag: `pizza-club-${order.orderId}-${newStatus}`,
+        renotify: true,
+        vibrate: [180, 90, 220],
+        data: {
+          orderId: order.orderId,
+          url: `./?view=history&orderId=${encodeURIComponent(order.orderId)}`
+        }
+      };
+
+      try {
+        if ("serviceWorker" in navigator) {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg && typeof reg.showNotification === "function") {
+            await reg.showNotification(title, options);
+            return;
+          }
+        }
+        const notif = new Notification(title, options);
+        notif.onclick = () => {
+          window.focus();
+          selectedHistoryOrderId = order.orderId;
+          window.switchView("history");
+        };
+      } catch {
+        // Ignore notification errors in restricted contexts
+      }
+    }
+
+    function triggerOrderStatusAlert(order, prevStatus, nextStatus) {
+      if (!order || !nextStatus || prevStatus === nextStatus) return;
+      if (!ALERT_MILESTONE_STATUSES.has(nextStatus)) return;
+      if (hasNotifiedTransition(order.orderId, nextStatus)) return;
+
+      markTransitionNotified(order.orderId, nextStatus);
+      playOrderAlertSound();
+      navigator.vibrate?.([180, 90, 220]);
+      showLocalOrderNotification(order, nextStatus);
+
+      const toastMsg = nextStatus === "PAYMENT_CONFIRMED"
+        ? `✅ ${order.orderNumber}: ¡Pago confirmado!`
+        : `🛵 ${order.orderNumber}: ¡Tu pizza va en camino!`;
+      showToast(toastMsg);
+    }
+
+    window.enableOrderAlertsFromUi = async function () {
+      unlockAlertAudio();
+      if ("Notification" in window && Notification.permission === "default") {
+        try {
+          await Notification.requestPermission();
+        } catch {
+          // Ignore permission request failure
+        }
+      }
+      playOrderAlertSound();
+      renderOrderAlertsBar();
+      const perm = ("Notification" in window) ? Notification.permission : "unsupported";
+      if (perm === "granted") {
+        await registerBackgroundOrderAlerts();
+        showToast("🔔 Alertas push y sonido activados (funcionan incluso con la app cerrada)");
+      } else if (perm === "denied") {
+        showToast("🔊 Sonido activado (notificaciones bloqueadas en el navegador)");
+      } else {
+        showToast("🔊 Alerta sonora activada");
+      }
+    };
+
+    window.toggleAlertSoundMute = function () {
+      const nextMuted = !isAlertSoundMuted();
+      try {
+        localStorage.setItem(ALERT_SOUND_MUTED_KEY, nextMuted ? "1" : "0");
+      } catch {
+        // Ignore storage error
+      }
+      if (!nextMuted) {
+        unlockAlertAudio();
+        playOrderAlertSound();
+      }
+      renderOrderAlertsBar();
+    };
+
+    function renderOrderAlertsBar() {
+      const root = document.getElementById("order-alerts-bar");
+      if (!root) return;
+      const muted = isAlertSoundMuted();
+      const hasNotifApi = "Notification" in window;
+      const perm = hasNotifApi ? Notification.permission : "unsupported";
+      const isActive = !muted && (perm === "granted" || !hasNotifApi);
+
+      root.innerHTML = `<div class="alerts-banner ${isActive ? "active" : ""}">
+        <div style="flex:1;min-width:200px">
+          <strong>${perm === "granted" ? "🔔 Alertas locales y sonido activos" : "🔔 Recibí avisos cuando cambie tu pedido"}</strong>
+          <div style="font-size:12px;opacity:.88;margin-top:2px">
+            ${perm === "denied"
+              ? "Las notificaciones del navegador están bloqueadas; el aviso sonoro sigue disponible."
+              : "Te avisamos con sonido y notificación al confirmar tu pago o salir el delivery."}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${hasNotifApi && perm !== "granted" && perm !== "denied"
+            ? `<button class="btn gold sm" onclick="enableOrderAlertsFromUi()">Activar alertas</button>`
+            : `<button class="btn outline sm" onclick="toggleAlertSoundMute()">${muted ? "🔇 Activar sonido" : "🔊 Sonido ON"}</button>`}
+        </div>
+      </div>`;
     }
 
     const STATUS_META = {
@@ -536,11 +804,11 @@
       }[ch]));
     }
 
-    function generateFirestoreOrderId() {
+    function generateOrderId() {
       const bytes = new Uint8Array(12);
       crypto.getRandomValues(bytes);
       const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-      return "ord_" + hex; // 28 chars, satisfies >= 20 char security rule
+      return "ord_" + hex;
     }
 
     function formatOrderDate(iso) {
@@ -568,21 +836,68 @@
       return (order.items || []).reduce((sum, it) => sum + Math.max(0, Number(it.quantity || 0)), 0);
     }
 
+    function generateUniqueLoyaltyCoupon() {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const bytes = new Uint8Array(8);
+      if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+        crypto.getRandomValues(bytes);
+      } else {
+        for (let i = 0; i < 8; i++) bytes[i] = Math.floor(Math.random() * 256);
+      }
+      const code = Array.from(bytes, (b) => chars[b % chars.length]).join("");
+      return `PC-VIP-${code.slice(0, 4)}-${code.slice(4, 8)}`;
+    }
+
+    function readRawPointsState() {
+      try {
+        const raw = localStorage.getItem(POINTS_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") return parsed;
+        }
+      } catch {
+        // Ignore parse failure
+      }
+      return {};
+    }
+
     function syncPizzaClubPointsFromOrders(list) {
       const orders = Array.isArray(list) ? list : [];
+      const existing = readRawPointsState();
       const perOrder = {};
-      let balance = 0;
+      let totalEarned = 0;
       orders.forEach((order) => {
         const pts = computeOrderPizzasCount(order);
         if (pts > 0 && order.orderId) {
           perOrder[order.orderId] = pts;
-          balance += pts;
+          totalEarned += pts;
         }
       });
+
+      const redeemedPoints = Math.min(totalEarned, Math.max(0, Number(existing.redeemedPoints || 0)));
+      const balance = Math.max(0, totalEarned - redeemedPoints);
+      const redeemedCoupons = Array.isArray(existing.redeemedCoupons) ? existing.redeemedCoupons : [];
+      let activeCoupon = existing.activeCoupon && existing.activeCoupon.code ? existing.activeCoupon : null;
+
+      if (balance >= 10) {
+        if (!activeCoupon) {
+          activeCoupon = {
+            code: generateUniqueLoyaltyCoupon(),
+            createdAtIso: new Date().toISOString(),
+            pointsCost: 10
+          };
+        }
+      } else {
+        activeCoupon = null;
+      }
+
       const payload = {
         balance,
-        totalEarned: balance,
+        totalEarned,
+        redeemedPoints,
         perOrder,
+        activeCoupon,
+        redeemedCoupons,
         updatedAtIso: new Date().toISOString()
       };
       try {
@@ -597,26 +912,277 @@
       if (Array.isArray(ordersOverride)) {
         return syncPizzaClubPointsFromOrders(ordersOverride);
       }
-      try {
-        const raw = localStorage.getItem(POINTS_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed.balance === "number") return parsed;
-        }
-      } catch {
-        // Fall through and recompute from saved orders
+      const existing = readRawPointsState();
+      if (typeof existing.balance === "number" && (existing.balance < 10 || existing.activeCoupon?.code)) {
+        return existing;
       }
       return syncPizzaClubPointsFromOrders(loadOrders());
     }
 
-    function saveOrders(list) {
+    window.copyLoyaltyCoupon = function (code) {
+      if (!code) return;
+      navigator.clipboard?.writeText(code);
+      showToast(`Cupón copiado: ${code}`);
+    };
+
+    window.redeemPizzaClubReward = function () {
+      const orders = loadOrders();
+      const current = syncPizzaClubPointsFromOrders(orders);
+      if (current.balance < 10 || !current.activeCoupon?.code) {
+        showToast("Necesitás al menos 10 puntos para canjear tu premio VIP.");
+        return;
+      }
+
+      const redeemedCoupon = {
+        code: current.activeCoupon.code,
+        redeemedAtIso: new Date().toISOString(),
+        pointsCost: 10
+      };
+      const nextRedeemedPoints = Number(current.redeemedPoints || 0) + 10;
+      const nextBalance = Math.max(0, Number(current.totalEarned || 0) - nextRedeemedPoints);
+      const nextRedeemedList = [redeemedCoupon, ...(current.redeemedCoupons || [])].slice(0, 15);
+      const nextActiveCoupon = nextBalance >= 10
+        ? { code: generateUniqueLoyaltyCoupon(), createdAtIso: new Date().toISOString(), pointsCost: 10 }
+        : null;
+
+      const updated = {
+        ...current,
+        balance: nextBalance,
+        redeemedPoints: nextRedeemedPoints,
+        activeCoupon: nextActiveCoupon,
+        redeemedCoupons: nextRedeemedList,
+        updatedAtIso: new Date().toISOString()
+      };
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 30)));
+        localStorage.setItem(POINTS_KEY, JSON.stringify(updated));
+      } catch {
+        // Ignore storage quota errors
+      }
+
+      navigator.clipboard?.writeText(redeemedCoupon.code);
+      renderOrderHistory();
+      showToast(`🎉 ¡Premio canjeado! Cupón ${redeemedCoupon.code} copiado.`);
+
+      const latestCustomer = orders.find((o) => o.customerName)?.customerName || "";
+      const waText = `🎁 *PIZZA CLUB POINTS — CANJE DE PREMIO VIP*\n${latestCustomer ? `Cliente: ${latestCustomer}\n` : ""}Quiero canjear mi premio de 10 puntos.\n🎟️ Cupón único: *${redeemedCoupon.code}*`;
+      const waUrl = `https://wa.me/${encodeURIComponent(BUSINESS_SETTINGS.whatsappNumber || "59593551936")}?text=${encodeURIComponent(waText)}`;
+      window.open(waUrl, "_blank", "noopener");
+    };
+
+    function saveOrders(list) {
+      const trimmed = list.slice(0, 30);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
       } catch {
         // Ignore storage quota errors gracefully
       }
-      syncPizzaClubPointsFromOrders(list);
-      updateHistoryBadge(list.length);
+      syncPizzaClubPointsFromOrders(trimmed);
+      updateHistoryBadge(trimmed.length);
+      syncSwBackgroundState(trimmed);
+    }
+
+    const SW_DB_NAME = "pizza_club_sw_db_v1";
+    const SW_STORE_NAME = "kv";
+    let realtimeSocket = null;
+    let realtimeHeartbeatTimer = null;
+
+    function writeSwIdbEntries(entries) {
+      if (typeof indexedDB === "undefined") return;
+      try {
+        const req = indexedDB.open(SW_DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(SW_STORE_NAME)) {
+            db.createObjectStore(SW_STORE_NAME);
+          }
+        };
+        req.onsuccess = () => {
+          try {
+            const db = req.result;
+            const tx = db.transaction(SW_STORE_NAME, "readwrite");
+            const store = tx.objectStore(SW_STORE_NAME);
+            Object.entries(entries).forEach(([k, v]) => {
+              if (v !== undefined && v !== null) store.put(v, k);
+            });
+          } catch {
+            // Ignore transaction failure
+          }
+        };
+      } catch {
+        // Ignore IndexedDB error
+      }
+    }
+
+    function syncSwBackgroundState(ordersOverride) {
+      const orders = Array.isArray(ordersOverride) ? ordersOverride : loadOrders();
+      const notifiedTransitions = getNotifiedTransitions();
+      writeSwIdbEntries({
+        orders,
+        notifiedTransitions,
+        supabaseCfg: supabaseCfg || null
+      });
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.ready.then((reg) => {
+          const target = navigator.serviceWorker.controller || reg.active;
+          target?.postMessage({
+            type: "SYNC_SW_STATE",
+            supabaseCfg: supabaseCfg || null,
+            orders,
+            notifiedTransitions
+          });
+        }).catch(() => {});
+      }
+    }
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+
+    async function syncPushSubscriptionWithSupabase(subscription, orders) {
+      if (!supabaseCfg || !subscription) return;
+      try {
+        const json = subscription.toJSON();
+        const orderIds = (orders || loadOrders()).map((o) => o.orderId).filter(Boolean);
+        const subId = "sub_" + btoa(subscription.endpoint).replace(/[^a-zA-Z0-9]/g, "").slice(-24);
+        await sbFetch("push_subscriptions?on_conflict=endpoint", {
+          method: "POST",
+          headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+          body: JSON.stringify({
+            id: subId,
+            endpoint: subscription.endpoint,
+            p256dh: json.keys?.p256dh || "",
+            auth: json.keys?.auth || "",
+            subscription: json,
+            order_ids: orderIds,
+            user_agent: navigator.userAgent.slice(0, 180),
+            updated_at_ms: Date.now()
+          })
+        });
+      } catch (err) {
+        console.warn("No se pudo guardar suscripción push en Supabase:", err);
+        recordSystemLog("ERROR", "Tienda (Push)", "No se pudo registrar suscripción push en Supabase", err, "push_subscriptions");
+      }
+    }
+
+    async function registerBackgroundOrderAlerts() {
+      if (!("serviceWorker" in navigator)) return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        syncSwBackgroundState();
+
+        const orders = loadOrders();
+        const hasActiveOrders = orders.some(
+          (o) => o.status !== "COMPLETED" && o.status !== "CANCELLED"
+        );
+
+        if (hasActiveOrders && "sync" in reg) {
+          reg.sync.register("pizza-club-check-orders").catch(() => {});
+        }
+        if ("periodicSync" in reg) {
+          try {
+            const status = await navigator.permissions.query({ name: "periodic-background-sync" });
+            if (status.state === "granted") {
+              await reg.periodicSync.register("pizza-club-order-status-sync", {
+                minInterval: 60 * 1000
+              });
+            }
+          } catch {
+            // Periodic background sync optional depending on browser
+          }
+        }
+
+        const vapidKey = String(supabaseCfg?.vapidPublicKey || "").trim();
+        if (
+          vapidKey &&
+          "PushManager" in window &&
+          "Notification" in window &&
+          Notification.permission === "granted"
+        ) {
+          let sub = await reg.pushManager.getSubscription();
+          if (!sub) {
+            sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(vapidKey)
+            });
+          }
+          await syncPushSubscriptionWithSupabase(sub, orders);
+        }
+      } catch {
+        // Ignore background registration issues cleanly
+      }
+    }
+
+    function connectSupabaseOrderRealtime() {
+      if (!supabaseCfg || typeof WebSocket === "undefined") return;
+      if (realtimeSocket && realtimeSocket.readyState <= WebSocket.OPEN) return;
+
+      try {
+        const wsBase = supabaseCfg.url.replace(/^https:/i, "wss:").replace(/^http:/i, "ws:");
+        const wsUrl = `${wsBase}/realtime/v1/websocket?apikey=${encodeURIComponent(supabaseCfg.anonKey)}&vsn=1.0.0`;
+        realtimeSocket = new WebSocket(wsUrl);
+        let refCounter = 1;
+
+        realtimeSocket.addEventListener("open", () => {
+          const joinRef = String(refCounter++);
+          realtimeSocket.send(JSON.stringify({
+            topic: "realtime:public:order_status",
+            event: "phx_join",
+            payload: {
+              config: {
+                broadcast: { self: false },
+                presence: { key: "" },
+                postgres_changes: [
+                  { event: "UPDATE", schema: "public", table: "order_status" },
+                  { event: "INSERT", schema: "public", table: "order_status" }
+                ]
+              }
+            },
+            ref: joinRef
+          }));
+
+          clearInterval(realtimeHeartbeatTimer);
+          realtimeHeartbeatTimer = setInterval(() => {
+            if (realtimeSocket?.readyState === WebSocket.OPEN) {
+              realtimeSocket.send(JSON.stringify({
+                topic: "phoenix",
+                event: "heartbeat",
+                payload: {},
+                ref: String(refCounter++)
+              }));
+            }
+          }, 25000);
+        });
+
+        realtimeSocket.addEventListener("message", (evt) => {
+          try {
+            const msg = JSON.parse(evt.data);
+            const record = msg?.payload?.data?.record || msg?.payload?.record;
+            if (msg?.event === "postgres_changes" && record?.id && record?.status) {
+              updateOrderStatusInHistory(record.id, record.status, record.whatsapp_unlocked);
+            }
+          } catch {
+            // Ignore malformed realtime frames
+          }
+        });
+
+        realtimeSocket.addEventListener("error", () => {
+          recordSystemLog("WARN", "Tienda (Realtime)", "Error de conexión WebSocket Realtime con Supabase; usando respaldo por polling cada 5s.", "", "realtime/v1/websocket");
+        });
+
+        realtimeSocket.addEventListener("close", () => {
+          clearInterval(realtimeHeartbeatTimer);
+          realtimeSocket = null;
+        });
+      } catch (err) {
+        recordSystemLog("WARN", "Tienda (Realtime)", "No se pudo iniciar Realtime WebSocket", err, "realtime/v1/websocket");
+      }
     }
 
     function updateHistoryBadge(count) {
@@ -631,22 +1197,23 @@
       list.unshift(order);
       saveOrders(list);
       selectedHistoryOrderId = order.orderId;
-      attachOrderListener(order.orderId);
       renderOrderHistory();
     }
 
     function updateOrderStatusInHistory(orderId, status, whatsappUnlocked) {
       const list = loadOrders();
       let changed = false;
+      let triggeredTransition = null;
       const nowIso = new Date().toISOString();
       const next = list.map((order) => {
         if (order.orderId !== orderId) return order;
         changed = true;
+        const prevStatus = order.status;
         const nextStatus = status || order.status;
-        const stageStartedAtIso = nextStatus !== order.status
+        const stageStartedAtIso = nextStatus !== prevStatus
           ? nowIso
           : (order.stageStartedAtIso || order.createdAtIso || nowIso);
-        return {
+        const updatedOrder = {
           ...order,
           status: nextStatus,
           whatsappUnlocked: Boolean(whatsappUnlocked),
@@ -654,10 +1221,21 @@
           stageStartedAtIso,
           lastCheckedIso: nowIso
         };
+        if (prevStatus !== nextStatus && ALERT_MILESTONE_STATUSES.has(nextStatus)) {
+          triggeredTransition = { order: updatedOrder, prevStatus, nextStatus };
+        }
+        return updatedOrder;
       });
       if (changed) {
         saveOrders(next);
         renderOrderHistory();
+      }
+      if (triggeredTransition) {
+        triggerOrderStatusAlert(
+          triggeredTransition.order,
+          triggeredTransition.prevStatus,
+          triggeredTransition.nextStatus
+        );
       }
     }
 
@@ -721,8 +1299,11 @@
       const fulfillmentLine = order.fulfillmentType === "DELIVERY"
         ? `Modalidad: Delivery (${order.neighborhood || ""}, ${order.streetAndNumber || ""})`
         : `Modalidad: Retiro en local (${order.pickupTime || "a coordinar"})`;
+      const notesLine = order.additionalInstructions
+        ? `\nInstrucciones / Alérgenos: ${order.additionalInstructions}`
+        : "";
       const meta = STATUS_META[order.status] || STATUS_META.PENDING_PAYMENT;
-      return `*PIZZA CLUB - ${order.orderNumber}*\nEstado: ${meta.label}\nCliente: ${order.customerName} (${order.customerPhone})\nPreparación: ${order.preparationMode}\n${fulfillmentLine}\n${lines.join("\n")}\nTotal: ${fmt(order.totalAmountPyg)}\n\n✨ ¡Muchas gracias por tu preferencia!\nP.D.: Dentro de cada pizza hay un premio sorpresa 🎁`;
+      return `*PIZZA CLUB - ${order.orderNumber}*\nEstado: ${meta.label}\nCliente: ${order.customerName} (${order.customerPhone})\nPreparación: ${order.preparationMode}\n${fulfillmentLine}${notesLine}\n${lines.join("\n")}\nTotal: ${fmt(order.totalAmountPyg)}\n\n✨ ¡Muchas gracias por tu preferencia!\nP.D.: Dentro de cada pizza hay un premio sorpresa 🎁`;
     }
 
     window.switchView = function (view) {
@@ -779,7 +1360,16 @@
       document.getElementById("mode-bake").classList.toggle("active", mode !== "Lista para comer");
     };
 
-    window.openCheckoutModal = () => document.getElementById("checkout-modal").classList.add("open");
+    window.updateNotesCharCount = function () {
+      const el = document.getElementById("cust-notes");
+      const counter = document.getElementById("cust-notes-count");
+      if (!el || !counter) return;
+      counter.textContent = `${el.value.length} / 400 caracteres · Se envía directo a cocina y reparto`;
+    };
+    window.openCheckoutModal = () => {
+      window.updateNotesCharCount();
+      document.getElementById("checkout-modal").classList.add("open");
+    };
     window.closeCheckoutModal = () => document.getElementById("checkout-modal").classList.remove("open");
     window.openSurpriseModal = () => {
       document.getElementById("surprise-modal").classList.add("open");
@@ -809,6 +1399,7 @@
     };
 
     window.submitOrder = async function () {
+      unlockAlertAudio();
       const name = document.getElementById("cust-name").value.trim();
       const phone = document.getElementById("cust-phone").value.trim();
       const fulfillment = document.getElementById("cust-fulfillment").value;
@@ -843,60 +1434,68 @@
       const now = new Date();
       const yyMMdd = now.toISOString().slice(2, 10).replace(/-/g, "");
       const rand = Math.floor(1000 + Math.random() * 9000);
-      const orderId = generateFirestoreOrderId();
+      const orderId = generateOrderId();
       const orderNumber = `PC-${yyMMdd}-${rand}`;
       const desiredDate = now.toLocaleDateString("es-PY");
+      const nowMs = now.getTime();
 
       const submitBtn = document.getElementById("submit-order-btn");
       submitBtn.disabled = true;
       submitBtn.textContent = "Registrando preorden...";
 
       let cloudSynced = false;
-      if (firestoreApi) {
+      if (supabaseCfg) {
         try {
-          const { db, doc, writeBatch, serverTimestamp } = firestoreApi;
-          const batch = writeBatch(db);
           const orderPayload = {
-            orderNumber,
-            customerName: name.slice(0, 100),
-            customerPhone: phone.slice(0, 30),
-            desiredDate,
-            preparationMode: prepMode,
-            fulfillmentType: fulfillment,
+            id: orderId,
+            order_number: orderNumber,
+            customer_name: name.slice(0, 100),
+            customer_phone: phone.slice(0, 30),
+            desired_date: desiredDate,
+            additional_instructions: additionalInstructions ? additionalInstructions.slice(0, 400) : null,
+            preparation_mode: prepMode,
+            fulfillment_type: fulfillment,
+            neighborhood: fulfillment === "DELIVERY" ? neighborhood.slice(0, 100) : null,
+            street_and_number: fulfillment === "DELIVERY" ? streetAndNumber.slice(0, 150) : null,
+            delivery_reference: fulfillment === "DELIVERY" && deliveryReference ? deliveryReference.slice(0, 200) : null,
+            google_maps_link: null,
+            pickup_date: fulfillment === "PICKUP" ? desiredDate : null,
+            pickup_time: fulfillment === "PICKUP" ? pickupTime.slice(0, 20) : null,
             items,
-            subtotalPyg: total,
-            totalAmountPyg: total,
+            subtotal_pyg: total,
+            total_amount_pyg: total,
             status: "PENDING_PAYMENT",
-            whatsappUnlocked: false,
-            paymentMethod: "BANK_TRANSFER",
-            paymentBank: "Itaú Paraguay",
-            paymentAlias: "alejandromoises89@gmail.com",
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
+            whatsapp_unlocked: false,
+            payment_method: "BANK_TRANSFER",
+            payment_bank: BUSINESS_SETTINGS.bankName,
+            payment_alias: BUSINESS_SETTINGS.paymentAlias,
+            created_at_ms: nowMs,
+            updated_at_ms: nowMs
           };
-          if (additionalInstructions) orderPayload.additionalInstructions = additionalInstructions.slice(0, 400);
-          if (fulfillment === "DELIVERY") {
-            orderPayload.neighborhood = neighborhood.slice(0, 100);
-            orderPayload.streetAndNumber = streetAndNumber.slice(0, 150);
-            if (deliveryReference) orderPayload.deliveryReference = deliveryReference.slice(0, 200);
-          } else {
-            orderPayload.pickupDate = desiredDate;
-            orderPayload.pickupTime = pickupTime.slice(0, 20);
-          }
-          batch.set(doc(db, "orders", orderId), orderPayload);
-          batch.set(doc(db, "order_status", orderId), {
-            orderNumber,
+          const statusPayload = {
+            id: orderId,
+            order_number: orderNumber,
             status: "PENDING_PAYMENT",
-            whatsappUnlocked: false,
-            totalAmountPyg: total,
-            fulfillmentType: fulfillment,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
+            whatsapp_unlocked: false,
+            total_amount_pyg: total,
+            fulfillment_type: fulfillment,
+            created_at_ms: nowMs,
+            updated_at_ms: nowMs
+          };
+          await sbFetch("orders", {
+            method: "POST",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(orderPayload)
           });
-          await batch.commit();
+          await sbFetch("order_status", {
+            method: "POST",
+            headers: { Prefer: "return=minimal" },
+            body: JSON.stringify(statusPayload)
+          });
           cloudSynced = true;
         } catch (err) {
-          console.warn("No se pudo sincronizar con Firestore:", err);
+          console.warn("No se pudo sincronizar con la base de datos online:", err);
+          recordSystemLog("ERROR", "Tienda (Pedidos)", `No se pudo enviar la preorden ${orderNumber} a Supabase`, err, "orders / order_status");
         }
       }
 
@@ -918,8 +1517,8 @@
         additionalInstructions,
         items,
         totalAmountPyg: total,
-        paymentBank: "Itaú Paraguay",
-        paymentAlias: "alejandromoises89@gmail.com",
+        paymentBank: BUSINESS_SETTINGS.bankName,
+        paymentAlias: BUSINESS_SETTINGS.paymentAlias,
         status: "PENDING_PAYMENT",
         whatsappUnlocked: false,
         cloudSynced
@@ -927,44 +1526,60 @@
 
       upsertOrderInHistory(savedOrder);
       Object.keys(cart).forEach((k) => { cart[k] = 0; });
+      const notesEl = document.getElementById("cust-notes");
+      if (notesEl) {
+        notesEl.value = "";
+        window.updateNotesCharCount();
+      }
       window.renderCatalog();
       submitBtn.disabled = false;
       submitBtn.textContent = "Confirmar Preorden";
       window.closeCheckoutModal();
       window.switchView("history");
       window.scrollTo({ top: 0, behavior: "smooth" });
+      registerBackgroundOrderAlerts();
     };
 
     window.checkSingleOrderStatus = async function (orderId) {
-      if (!firestoreApi) {
-        alert("Historial guardado en este navegador. Completá las claves reales en web-pwa/firebase-config.js para consultar confirmaciones del administrador en la nube.");
+      if (!supabaseCfg) {
+        alert("Historial guardado en este navegador. Configurá la base online en web-pwa/db-config.js (o desde Panel Admin) para ver confirmaciones desde cualquier dispositivo.");
         return;
       }
       try {
-        const { db, doc, getDoc } = firestoreApi;
-        const snap = await getDoc(doc(db, "order_status", orderId));
-        if (snap.exists()) {
-          const data = snap.data();
-          updateOrderStatusInHistory(orderId, data.status, data.whatsappUnlocked);
-        } else {
-          updateOrderStatusInHistory(orderId, null, false);
+        const rows = await sbFetch(`order_status?id=eq.${encodeURIComponent(orderId)}&select=*&limit=1`);
+        if (Array.isArray(rows) && rows.length > 0) {
+          const data = rows[0];
+          updateOrderStatusInHistory(orderId, data.status, data.whatsapp_unlocked);
         }
       } catch (err) {
         console.warn("Error consultando order_status", orderId, err);
+        recordSystemLog("ERROR", "Tienda (Seguimiento)", `Error consultando estado de ${orderId} en Supabase`, err, "order_status");
       }
     };
 
     window.refreshAllOrderStatuses = async function () {
+      unlockAlertAudio();
       const orders = loadOrders();
-      if (!firestoreApi || orders.length === 0) return;
-      await Promise.all(orders.map((o) => window.checkSingleOrderStatus(o.orderId)));
+      if (!supabaseCfg || orders.length === 0) return;
+      try {
+        const ids = orders.map((o) => o.orderId).filter(Boolean);
+        if (ids.length === 0) return;
+        const inExpr = `(${ids.map((id) => `"${String(id).replace(/"/g, "")}"`).join(",")})`;
+        const rows = await sbFetch(`order_status?id=in.${encodeURIComponent(inExpr)}&select=*`);
+        if (Array.isArray(rows)) {
+          rows.forEach((row) => {
+            updateOrderStatusInHistory(row.id, row.status, row.whatsapp_unlocked);
+          });
+        }
+      } catch (err) {
+        console.warn("Error refrescando historial:", err);
+        recordSystemLog("ERROR", "Tienda (Sincronización)", "Fallo al actualizar estados del historial desde Supabase", err, "order_status");
+      }
     };
 
     window.clearOrderHistory = function () {
       if (!confirm("¿Querés borrar el historial de pedidos guardado en este dispositivo?")) return;
       saveOrders([]);
-      activeListeners.forEach((unsub) => unsub());
-      activeListeners.clear();
       renderOrderHistory();
     };
 
@@ -974,17 +1589,17 @@
       const pointsData = loadPizzaClubPoints(orders);
       const balance = Number(pointsData.balance || 0);
       const goal = 10;
-      const mod = balance % goal;
-      const reachedGoal = balance > 0 && mod === 0;
-      const progressPct = reachedGoal ? 100 : (mod / goal) * 100;
-      const remaining = reachedGoal ? 0 : goal - mod;
+      const hasUnlockedReward = balance >= goal && Boolean(pointsData.activeCoupon?.code);
+      const progressPct = hasUnlockedReward ? 100 : Math.min(100, (balance / goal) * 100);
+      const remaining = hasUnlockedReward ? 0 : Math.max(0, goal - balance);
+      const redeemedCoupons = Array.isArray(pointsData.redeemedCoupons) ? pointsData.redeemedCoupons : [];
       const recentOrders = orders.filter((o) => computeOrderPizzasCount(o) > 0).slice(0, 3);
 
       container.innerHTML = `<section class="points-card" aria-label="Pizza Club Points">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
           <div>
             <strong style="font-size:17px;color:#473004">🍕 Pizza Club Points</strong>
-            <div style="font-size:12px;color:#6E4D12;margin-top:2px">1 punto por cada pizza comprada (guardado en este dispositivo)</div>
+            <div style="font-size:12px;color:#6E4D12;margin-top:2px">1 punto por cada pizza comprada · Premio VIP cada ${goal} pts</div>
           </div>
           <span id="pizza-club-points-balance" class="points-badge">${balance} ${balance === 1 ? "pto" : "pts"}</span>
         </div>
@@ -992,10 +1607,33 @@
           <div class="points-bar-fill" style="width:${progressPct}%"></div>
         </div>
         <div style="font-size:13px;font-weight:700;color:#473004">
-          ${reachedGoal
-            ? `🎉 ¡Completaste ${goal} puntos! Mostrá tu pantalla por WhatsApp para canjear tu premio VIP.`
-            : `Te faltan ${remaining} ${remaining === 1 ? "pizza" : "pizzas"} para tu próximo premio VIP (${goal} pts).`}
+          ${hasUnlockedReward
+            ? `🎉 ¡Alcanzaste ${goal} puntos! Generamos tu cupón VIP único para canjear tu premio.`
+            : `Te faltan ${remaining} ${remaining === 1 ? "pizza" : "pizzas"} para desbloquear tu próximo premio VIP (${goal} pts).`}
         </div>
+        ${hasUnlockedReward ? `
+          <div style="margin-top:12px;background:#171411;color:#fff;border-radius:14px;padding:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+              <div>
+                <div style="font-size:11px;opacity:.72;letter-spacing:.4px">CUPÓN ÚNICO DE FIDELIDAD</div>
+                <strong id="loyalty-coupon-code" style="font-size:16px;color:var(--gold);letter-spacing:.6px">${escapeHtml(pointsData.activeCoupon.code)}</strong>
+              </div>
+              <button class="btn outline sm" style="color:var(--gold);border-color:rgba(231,173,72,0.5)" onclick="copyLoyaltyCoupon('${escapeHtml(pointsData.activeCoupon.code)}')">Copiar</button>
+            </div>
+            <button id="redeem-loyalty-btn" class="btn wa" style="margin-top:10px" onclick="redeemPizzaClubReward()">🎁 Canjear Premio</button>
+          </div>
+        ` : ""}
+        ${redeemedCoupons.length > 0 ? `
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(231,173,72,0.55);font-size:12px;display:grid;gap:4px">
+            <strong style="color:#473004">Cupones canjeados</strong>
+            ${redeemedCoupons.slice(0, 2).map((c) => `
+              <div style="display:flex;justify-content:space-between;color:#5C3D06">
+                <span>🎟️ <strong>${escapeHtml(c.code)}</strong></span>
+                <span style="color:var(--wa);font-weight:700">-10 pts · Canjeado</span>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
         ${recentOrders.length > 0 ? `
           <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(231,173,72,0.55);font-size:12px;display:grid;gap:4px">
             ${recentOrders.map((o) => {
@@ -1014,6 +1652,7 @@
       const container = document.getElementById("history-list");
       const orders = loadOrders();
       updateHistoryBadge(orders.length);
+      renderOrderAlertsBar();
       renderPizzaClubPointsSection(orders);
 
       if (orders.length === 0) {
@@ -1076,6 +1715,7 @@
 
         <div style="background:rgba(255,255,255,0.08);border-radius:14px;padding:12px;margin-top:14px;font-size:13px">
           ${activeItemsHtml}
+          ${activeOrder.additionalInstructions ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.12);font-size:12px;color:#F8E7C9">📝 <strong>Instrucciones / Alérgenos:</strong> ${escapeHtml(activeOrder.additionalInstructions)}</div>` : ""}
           <div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.14);display:flex;justify-content:space-between;font-size:15px;font-weight:800">
             <span>Total</span><span style="color:var(--gold)">${fmt(activeOrder.totalAmountPyg)}</span>
           </div>
@@ -1091,10 +1731,10 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
           ${activeUnlocked
             ? `<a class="btn wa" style="flex:1" href="${activeWaUrl}" target="_blank" rel="noopener">Continuar por WhatsApp</a>`
-            : (!activeOrder.cloudSynced && !firestoreApi
+            : (!activeOrder.cloudSynced && !supabaseCfg
                 ? `<a class="btn wa" style="flex:1" href="${activeWaUrl}" target="_blank" rel="noopener" onclick="markLocalTransferSent('${escapeHtml(activeOrder.orderId)}')">💬 Ya transferí — Enviar por WhatsApp</a>`
                 : `<button class="btn" style="flex:1;background:rgba(255,255,255,0.15)" disabled>🔒 WhatsApp se habilita al confirmar pago</button>`)}
-          ${activeOrder.cloudSynced ? `<button class="btn gold sm" onclick="checkSingleOrderStatus('${escapeHtml(activeOrder.orderId)}')">↻ Verificar</button>` : ""}
+          ${(activeOrder.cloudSynced || supabaseCfg) ? `<button class="btn gold sm" onclick="checkSingleOrderStatus('${escapeHtml(activeOrder.orderId)}')">↻ Verificar</button>` : ""}
         </div>
 
         <div style="background:var(--gold-soft);color:#473004;border:1.5px solid var(--gold);border-radius:14px;padding:12px;margin-top:12px;font-size:13px">
@@ -1123,6 +1763,7 @@
             <span class="status-badge ${meta.css}">${meta.label}</span>
           </div>
           <div style="font-size:13px;margin:6px 0;color:var(--dark)">${summary}</div>
+          ${order.additionalInstructions ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">📝 ${escapeHtml(order.additionalInstructions)}</div>` : ""}
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px">
             <span style="color:var(--muted)">${escapeHtml(order.preparationMode)}</span>
             <strong style="color:var(--primary)">${fmt(order.totalAmountPyg)}</strong>
@@ -1216,103 +1857,139 @@
       }
     };
 
-    function attachOrderListener(orderId) {
-      if (!firestoreApi || !orderId || orderId.length < 20 || activeListeners.has(orderId)) return;
-      const { db, doc, onSnapshot } = firestoreApi;
-      const unsub = onSnapshot(doc(db, "order_status", orderId), (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          updateOrderStatusInHistory(orderId, data.status, data.whatsappUnlocked);
-        }
-      }, () => {});
-      activeListeners.set(orderId, unsub);
-    }
-
-    const CONFIG_OVERRIDE_KEY = "pizza_club_firebase_config_override_v1";
-
-    function isValidFirebaseConfig(cfg) {
+    function isValidDbConfig(cfg) {
       if (!cfg || typeof cfg !== "object") return false;
-      const apiKey = String(cfg.apiKey || "").trim();
-      const projectId = String(cfg.projectId || "").trim();
-      const appId = String(cfg.appId || "").trim();
+      const url = String(cfg.url || "").trim().replace(/\/+$/, "");
+      const anonKey = String(cfg.anonKey || "").trim();
       const placeholderRe = /YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_|PEG[AÁ]|TU_/i;
-      if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(apiKey)) return false;
-      if (!projectId || placeholderRe.test(projectId)) return false;
-      if (appId && placeholderRe.test(appId)) return false;
+      if (!/^https:\/\/[a-z0-9.-]+/i.test(url) || placeholderRe.test(url)) return false;
+      if (anonKey.length <= 20 || placeholderRe.test(anonKey)) return false;
       return true;
     }
 
-    function getEffectiveFirebaseConfig() {
+    function getEffectiveDbConfig() {
+      const defaultVapid = String(window.PIZZA_CLUB_DB_CONFIG?.vapidPublicKey || "").trim();
       try {
-        const raw = localStorage.getItem(CONFIG_OVERRIDE_KEY);
+        const raw = localStorage.getItem(DB_CONFIG_OVERRIDE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (isValidFirebaseConfig(parsed)) return parsed;
+          if (isValidDbConfig(parsed)) {
+            return {
+              url: parsed.url.trim().replace(/\/+$/, ""),
+              anonKey: parsed.anonKey.trim(),
+              vapidPublicKey: String(parsed.vapidPublicKey || defaultVapid).trim()
+            };
+          }
         }
       } catch {
         // Ignore invalid override
       }
-      return window.PIZZA_CLUB_FIREBASE_CONFIG;
+      if (isValidDbConfig(window.PIZZA_CLUB_DB_CONFIG)) {
+        return {
+          url: window.PIZZA_CLUB_DB_CONFIG.url.trim().replace(/\/+$/, ""),
+          anonKey: window.PIZZA_CLUB_DB_CONFIG.anonKey.trim(),
+          vapidPublicKey: defaultVapid
+        };
+      }
+      return null;
     }
 
-    async function initFirebaseIfConfigured() {
+    async function sbFetch(pathWithQuery, options = {}) {
+      if (!supabaseCfg) throw new Error("Base online no configurada");
+      const headers = {
+        apikey: supabaseCfg.anonKey,
+        Authorization: `Bearer ${supabaseCfg.anonKey}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      };
+      const res = await fetch(`${supabaseCfg.url}/rest/v1/${pathWithQuery}`, {
+        ...options,
+        headers
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
+      }
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    async function initOnlineDatabase() {
       const syncBanner = document.getElementById("cloud-sync-status");
-      const cfg = getEffectiveFirebaseConfig();
-      if (!isValidFirebaseConfig(cfg)) {
+      supabaseCfg = getEffectiveDbConfig();
+      if (!supabaseCfg) {
         syncBanner.innerHTML = `
-          <div>✅ <strong>Modo listo para pedir activo:</strong> Tu historial, <strong>Pizza Club Points</strong> y cuenta regresiva se guardan automáticamente en este dispositivo con envío directo por WhatsApp.</div>
+          <div>✅ <strong>Modo local activo:</strong> Tu historial, <strong>Pizza Club Points</strong> y cuenta regresiva se guardan en este dispositivo con envío directo por WhatsApp.</div>
           <details style="margin-top:6px">
-            <summary style="cursor:pointer;font-weight:700;color:var(--dark)">⚙️ Opcional: Conectar sincronización en la nube (<code>firebase-config.js</code>)</summary>
+            <summary style="cursor:pointer;font-weight:700;color:var(--dark)">🔌 Conectar base de datos online (para ver pedidos desde cualquier celular/PC)</summary>
             <ol style="margin:8px 0 2px;padding-left:18px;line-height:1.55">
-              <li>Si querés sincronizar en tiempo real con <a href="./admin.html" style="color:var(--primary)">Panel Admin</a>, pegá las credenciales Web del proyecto <code>gen-lang-client-0684931110</code> en <code>web-pwa/firebase-config.js</code> (o en el secreto <code>FIREBASE_CONFIG_JS</code> de GitHub).</li>
-              <li>Autorizá tu dominio de GitHub Pages en <em>Firebase Authentication → Authorized domains</em>.</li>
+              <li>Abrí el <a href="./admin.html" style="color:var(--primary)">Panel Admin</a> e ingresá con tu PIN de propietario para pegar tu URL y Anon Key de Supabase, o completá <code>web-pwa/db-config.js</code> tras ejecutar <code>supabase_schema.sql</code>.</li>
             </ol>
           </details>`;
         return;
       }
-      try {
-        const [{ initializeApp }, { getFirestore, doc, getDoc, collection, getDocs, onSnapshot, writeBatch, serverTimestamp }] = await Promise.all([
-          import("https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js"),
-          import("https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js")
-        ]);
-        const app = initializeApp(cfg);
-        const db = getFirestore(app, DATABASE_ID);
-        firestoreApi = { db, doc, getDoc, collection, getDocs, onSnapshot, writeBatch, serverTimestamp };
-        syncBanner.innerHTML = "✅ <strong>Sincronización en vivo conectada con Pizza Club:</strong> El estado de pago se actualiza automáticamente cuando el Admin lo confirma.";
 
-        // Refresh live catalog & inventory from Firestore
-        const [prodSnap, invSnap] = await Promise.all([
-          getDocs(collection(db, "products")),
-          getDocs(collection(db, "inventory"))
+      try {
+        const [products, inventory, settingsRows] = await Promise.all([
+          sbFetch("products?select=*&order=sort_order.asc"),
+          sbFetch("inventory?select=*"),
+          sbFetch("business_settings?id=eq.default&select=*&limit=1").catch((err) => {
+            recordSystemLog("WARN", "Tienda (Ajustes)", "No se pudo cargar business_settings desde Supabase; usando valores locales.", err, "business_settings");
+            return [];
+          })
         ]);
-        if (!prodSnap.empty) {
+
+        if (Array.isArray(settingsRows) && settingsRows.length > 0) {
+          const s = settingsRows[0];
+          BUSINESS_SETTINGS = {
+            whatsappNumber: s.whatsapp_number || "59593551936",
+            bankName: s.bank_name || "Itaú Paraguay",
+            paymentAlias: s.payment_alias || "alejandromoises89@gmail.com"
+          };
+        }
+
+        if (Array.isArray(products) && products.length > 0) {
           const invMap = {};
-          invSnap.forEach((d) => { invMap[d.id] = Number(d.data().stock ?? 20); });
-          const remote = [];
-          prodSnap.forEach((d) => {
-            const p = d.data();
-            if (p.active !== false) {
-              remote.push({
-                id: d.id,
-                name: p.name,
-                desc: p.description || "",
-                price: Number(p.pricePyg || 50000),
-                stock: invMap[d.id] ?? 20,
-                sortOrder: Number(p.sortOrder || 0)
-              });
-            }
-          });
+          (inventory || []).forEach((row) => { invMap[row.id] = Number(row.stock ?? 20); });
+          const remote = products
+            .filter((p) => p.active !== false)
+            .map((p) => ({
+              id: p.id,
+              name: p.name,
+              desc: p.description || "",
+              price: Number(p.price_pyg || 50000),
+              stock: invMap[p.id] ?? 20,
+              sortOrder: Number(p.sort_order || 0)
+            }));
           if (remote.length > 0) {
             PRODUCTS = remote.sort((a, b) => a.sortOrder - b.sortOrder);
             window.renderCatalog();
+          } else {
+            recordSystemLog("WARN", "Tienda (Catálogo)", "Todos los productos en Supabase están marcados como inactivos; mostrando catálogo local.", "", "products");
           }
+        } else {
+          recordSystemLog("WARN", "Tienda (Catálogo)", "La tabla products en Supabase devolvió 0 filas; mostrando catálogo local.", "", "products");
         }
 
-        // Attach real-time listeners to all saved orders in localStorage
-        loadOrders().forEach((o) => attachOrderListener(o.orderId));
+        syncBanner.innerHTML = "✅ <strong>Base de datos online conectada (Supabase):</strong> Sincronización en tiempo real + Service Worker activo incluso con la app cerrada.";
+        syncSwBackgroundState();
+        connectSupabaseOrderRealtime();
+        registerBackgroundOrderAlerts();
+        await window.refreshAllOrderStatuses();
+        if (statusPollTimer) clearInterval(statusPollTimer);
+        statusPollTimer = setInterval(() => {
+          const orders = loadOrders();
+          const hasActiveOrders = orders.some(
+            (o) => o.status !== "COMPLETED" && o.status !== "CANCELLED"
+          );
+          if (hasActiveOrders || document.visibilityState === "visible") {
+            window.refreshAllOrderStatuses();
+          }
+        }, 5000);
       } catch (err) {
-        console.warn("Firebase Web init fallback to localStorage:", err);
-        syncBanner.innerHTML = "⚠️ Trabajando en modo local (localStorage).";
+        console.warn("Supabase init fallback to localStorage:", err);
+        recordSystemLog("ERROR", "Tienda (Catálogo / Supabase)", "Error al cargar productos o conectar con Supabase al iniciar", err, "products / inventory");
+        syncBanner.innerHTML = "⚠️ Trabajando en modo local (verificá la URL/Key de Supabase en Panel Admin).";
       }
     }
 
@@ -1334,17 +2011,56 @@
     });
 
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("./sw.js").catch(() => {});
+      navigator.serviceWorker.register("./sw.js")
+        .then(() => {
+          syncSwBackgroundState();
+          registerBackgroundOrderAlerts();
+        })
+        .catch(() => {});
+      navigator.serviceWorker.addEventListener("message", (event) => {
+        if (event.data?.type === "OPEN_ORDER_HISTORY") {
+          if (event.data.orderId) {
+            selectedHistoryOrderId = event.data.orderId;
+          }
+          window.switchView("history");
+        } else if (event.data?.type === "ORDER_STATUS_UPDATED" && Array.isArray(event.data.orders)) {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(event.data.orders.slice(0, 30)));
+          } catch {
+            // Ignore quota error
+          }
+          syncPizzaClubPointsFromOrders(event.data.orders);
+          renderOrderHistory();
+          (event.data.transitions || []).forEach((t) => {
+            if (ALERT_MILESTONE_STATUSES.has(t.newStatus)) {
+              markTransitionNotified(t.orderId, t.newStatus);
+              playOrderAlertSound();
+              showToast(
+                t.newStatus === "PAYMENT_CONFIRMED"
+                  ? `✅ ${t.orderNumber}: ¡Pago confirmado!`
+                  : `🛵 ${t.orderNumber}: ¡Tu pizza va en camino!`
+              );
+            }
+          });
+        }
+      });
     }
+
+    window.addEventListener("pointerdown", () => unlockAlertAudio(), { once: true });
 
     window.renderCatalog();
     renderOrderHistory();
     setInterval(tickOrderCountdowns, 1000);
-    const initialView = new URLSearchParams(window.location.search).get("view");
+    const params = new URLSearchParams(window.location.search);
+    const initialView = params.get("view");
+    const initialOrderId = params.get("orderId");
+    if (initialOrderId) {
+      selectedHistoryOrderId = initialOrderId;
+    }
     if (initialView === "history") {
       window.switchView("history");
     }
-    initFirebaseIfConfigured();
+    initOnlineDatabase();
   </script>
 </body>
 </html>

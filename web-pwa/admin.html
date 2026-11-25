@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex, nofollow" />
   <meta name="theme-color" content="#171411" />
-  <title>Admin Pizza Club — Gestión de Pedidos y Confirmación de Pagos</title>
+  <title>Admin Pizza Club — Gestión de Pedidos Online</title>
   <link rel="icon" type="image/svg+xml" href="./icon.svg" />
-  <script src="./firebase-config.js" defer></script>
+  <script src="./db-config.js" defer></script>
   <style>
     :root {
       --primary: #C83D2D;
@@ -56,6 +56,15 @@
       padding: 16px;
       margin-bottom: 12px;
       border: 1px solid rgba(0,0,0,0.06);
+    }
+    .field {
+      width: 100%;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--outline);
+      font-size: 15px;
+      margin-bottom: 10px;
+      font-family: inherit;
     }
     .kpi-grid {
       display: grid;
@@ -172,87 +181,145 @@
     <div class="topbar-inner">
       <div>
         <strong style="font-size:18px;color:var(--gold)">🍕 Admin Pizza Club</strong>
-        <div id="admin-user-label" style="font-size:12px;opacity:.85">Acceso exclusivo del propietario</div>
+        <div id="admin-user-label" style="font-size:12px;opacity:.85">Acceso por PIN o Face ID / Biometría</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <a class="btn btn-light" href="./" style="min-height:38px;padding:7px 12px;font-size:13px">Ver Tienda Cliente</a>
+        <button id="db-settings-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="toggleDbSetupCard()">🔌 Base Online</button>
+        <button id="vapid-settings-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="toggleVapidSetupCard()">🔔 Push VAPID</button>
+        <button id="syslogs-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="focusSystemLogsCard()">🩺 Logs</button>
         <button id="faceid-setup-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="handleTopbarFaceIdAction()">🧬 Activar Face ID</button>
-        <button id="signout-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="handleSignOut()">Cerrar sesión</button>
+        <button id="signout-btn" class="btn btn-light" style="display:none;min-height:38px;padding:7px 12px;font-size:13px" onclick="handleSignOut()">Bloquear</button>
       </div>
     </div>
   </header>
 
   <main class="container">
-    <!-- Missing or Placeholder Firebase Web Config State -->
-    <section id="config-missing-view" class="card" style="display:none">
-      <h2 style="margin-top:0">Configurá Firebase Web para el Panel Admin</h2>
-      <p style="font-size:14px;color:var(--muted);line-height:1.5">
-        Pegá abajo el bloque <code>firebaseConfig</code> de tu App Web en <strong>Firebase Console</strong> (proyecto <code>gen-lang-client-0684931110</code> → <em>Configuración → Tus apps → Web</em>) para conectarte sin editar archivos:
-      </p>
-      <textarea id="firebase-paste-input" rows="7" style="width:100%;padding:12px;border-radius:12px;border:1px solid var(--outline);font-family:monospace;font-size:12px;margin-bottom:10px" placeholder='const firebaseConfig = {
-  apiKey: "AIzaSy...",
-  authDomain: "gen-lang-client-0684931110.firebaseapp.com",
-  projectId: "gen-lang-client-0684931110",
-  storageBucket: "gen-lang-client-0684931110.firebasestorage.app",
-  messagingSenderId: "573144896313",
-  appId: "1:573144896313:web:..."
-};'></textarea>
-      <div id="firebase-paste-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:10px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-        <button class="btn btn-primary" style="flex:1" onclick="savePastedFirebaseConfig()">Guardar y conectar</button>
-        <button class="btn btn-outline" onclick="clearSavedFirebaseConfig()">Restablecer</button>
-      </div>
-      <ol style="font-size:13px;color:var(--dark);line-height:1.6;padding-left:20px;margin:0">
-        <li>En <strong>Firebase Console → Authentication → Settings → Authorized domains</strong>, agregá tu dominio web (<code id="current-domain-hint">tu-usuario.github.io</code>) para habilitar el acceso con Google (<code>alejandromoises89@gmail.com</code>).</li>
-      </ol>
-    </section>
-
-    <!-- Multi-Provider Admin Auth Gate (Face ID / Google / Apple) -->
+    <!-- PIN + Face ID / Biometría Admin Auth Gate (Sin Firebase ni Google OAuth) -->
     <section id="login-view" class="card" style="display:none;max-width:440px;margin:28px auto;text-align:center;padding:28px 20px">
       <div style="font-size:40px;margin-bottom:8px">🔐</div>
       <h2 style="margin:0 0 8px">Panel Administrativo</h2>
       <p id="login-subtitle" style="font-size:14px;color:var(--muted);margin:0 0 18px">
-        Iniciá sesión con <strong>Google</strong>, <strong>Apple</strong> o <strong>Face ID / Biometría</strong> (<code>alejandromoises89@gmail.com</code>) para confirmar pagos y gestionar pedidos.
+        Ingresá tu <strong>PIN de Propietario</strong> o usá <strong>Face ID / Biometría</strong> para ver pedidos online, confirmar transferencias Itaú y gestionar stock.
       </p>
       <div id="login-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.45"></div>
-      <button id="fix-config-btn" class="btn btn-outline" style="display:none;width:100%;margin-bottom:12px" onclick="showConfigSetupView()">⚙️ Pegar / corregir configuración Web de Firebase</button>
+
+      <input id="admin-pin-input" class="field" type="password" inputmode="numeric" maxlength="8" placeholder="••••" onkeydown="if(event.key==='Enter') handlePinLogin()" />
       <div style="display:flex;flex-direction:column;gap:10px">
+        <button id="pin-signin-btn" class="btn btn-primary" style="width:100%" onclick="handlePinLogin()">
+          🔓 Entrar al Panel
+        </button>
         <button id="faceid-signin-btn" class="btn btn-outline" style="width:100%" onclick="handleFaceIdSignIn()">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 20h2a2 2 0 0 0 2-2v-2"/><path d="M9 10v1"/><path d="M15 10v1"/><path d="M12 10v3h-1"/><path d="M9 16c1.5 1 4.5 1 6 0"/>
-          </svg>
-          <span id="faceid-btn-label">Iniciar con Face ID / Biometría</span>
-        </button>
-
-        <button id="google-signin-btn" class="btn btn-primary" style="width:100%" onclick="handleGoogleSignIn()">
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="#fff" d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27 3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10 5.35 0 9.25-3.67 9.25-9.09 0-1.15-.15-1.81-.15-1.81z"/>
-          </svg>
-          Continuar con Google
-        </button>
-
-        <button id="apple-signin-btn" class="btn" style="width:100%;background:#111111;color:#FFFFFF" onclick="handleAppleSignIn()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.287-1.82-2.323-4.63-2.323-7.28 0-4.28 2.797-6.55 5.552-6.55 1.448 0 2.675.95 3.6.95.865 0 2.222-1.01 3.902-1.01.613 0 2.886.06 4.374 2.19-.13.09-2.383 1.37-2.383 4.19 0 3.26 2.854 4.42 2.955 4.45z"/>
-          </svg>
-          Continuar con Apple
+          🧬 <span id="faceid-btn-label">Desbloquear con Face ID / Biometría</span>
         </button>
       </div>
     </section>
 
-    <!-- Unauthorized Account View -->
-    <section id="unauthorized-view" class="card" style="display:none;max-width:460px;margin:28px auto;text-align:center;padding:28px 20px">
-      <div style="font-size:40px;margin-bottom:8px">⛔</div>
-      <h2 style="margin:0 0 8px">Acceso Restringido</h2>
-      <p id="unauthorized-msg" style="font-size:14px;color:var(--muted);margin:0 0 18px"></p>
-      <button class="btn btn-outline" style="width:100%" onclick="handleSignOut()">Cerrar sesión y probar otra cuenta</button>
-    </section>
-
     <!-- Authenticated Admin Dashboard -->
     <section id="dashboard-view" style="display:none">
+      <!-- Conectar / editar base online Supabase -->
+      <div id="db-config-card" class="card" style="border:1.5px solid var(--gold);display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <strong>🔌 Conectar Base de Datos Online (Supabase — Gratis y Sin Firebase)</strong>
+          <button class="btn btn-outline" style="min-height:34px;padding:6px 10px;font-size:12px" onclick="toggleDbSetupCard(false)">Ocultar</button>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin:0 0 10px;line-height:1.5">
+          Para ver pedidos desde <strong>cualquier cliente, celular o PC en tiempo real</strong>: creá un proyecto gratis en <a href="https://supabase.com" target="_blank" rel="noopener" style="color:var(--primary)">supabase.com</a>, ejecutá el archivo <code>supabase_schema.sql</code> en el <em>SQL Editor</em> y pegá acá tu <strong>Project URL</strong> y <strong>anon public key</strong>:
+        </p>
+        <input id="sb-url-input" class="field" placeholder="https://tuproyecto.supabase.co" />
+        <input id="sb-key-input" class="field" placeholder="eyJ... (anon public key)" />
+        <input id="sb-vapid-input" class="field" placeholder="VAPID Public Key (opcional para Push en iPhone/Android)" />
+        <div id="db-config-error" style="display:none;color:var(--danger);font-size:13px;margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" style="flex:1" onclick="saveSupabaseConfig()">Guardar y conectar online</button>
+          <button class="btn btn-outline" onclick="clearSupabaseConfig()">Desconectar</button>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #ECE5DA;margin:14px 0" />
+        <strong style="font-size:13px">🔑 Cambiar PIN del Panel Admin</strong>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="new-pin-input" class="field" style="margin-bottom:0;flex:1" type="password" inputmode="numeric" maxlength="8" placeholder="Nuevo PIN (mín. 4 dígitos)" />
+          <button class="btn btn-outline" onclick="changeAdminPin()">Actualizar PIN</button>
+        </div>
+      </div>
+
+      <!-- Generador y Descarga de VAPID Keys + Guía Supabase Push -->
+      <div id="vapid-setup-card" class="card" style="border:1.5px solid var(--primary);display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <strong>🔔 Notificaciones Push (VAPID Keys y Guía Supabase)</strong>
+          <button class="btn btn-outline" style="min-height:34px;padding:6px 10px;font-size:12px" onclick="toggleVapidSetupCard(false)">Ocultar</button>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin:0 0 10px;line-height:1.5">
+          Generá tus claves <strong>VAPID P-256</strong> directamente en este navegador y descargá los archivos listos para subir a <strong>Supabase</strong> y <strong>GitHub</strong>. Así los clientes reciben alertas en <strong>Android</strong> e <strong>iPhone</strong> incluso con la app cerrada.
+        </p>
+
+        <label for="vapid-subject-input" style="display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">VAPID_SUBJECT (correo de contacto)</label>
+        <input id="vapid-subject-input" class="field" value="mailto:alejandromoises89@gmail.com" placeholder="mailto:tu@correo.com" />
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <button id="generate-vapid-pack-btn" class="btn btn-primary" style="flex:1;min-width:220px" onclick="generateAndDownloadVapidPack()">
+            ⚡ Generar VAPID Keys y Descargar Archivos
+          </button>
+          <button class="btn btn-outline" onclick="generateVapidPairOnly()">
+            🔄 Solo regenerar claves
+          </button>
+        </div>
+
+        <div id="vapid-keys-preview" style="display:none;background:#FAF7F2;border:1px solid #E8E0D4;border-radius:14px;padding:12px;margin-bottom:12px">
+          <div style="font-size:12px;font-weight:800;color:var(--wa);margin-bottom:8px">
+            ✅ Claves VAPID activas (la clave pública ya se guardó para este navegador)
+          </div>
+
+          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted)">VAPID_PUBLIC_KEY (pública — va en Supabase Secrets y db-config.js)</label>
+          <div style="display:flex;gap:6px;margin:4px 0 10px">
+            <input id="vapid-public-out" class="field" style="margin:0;font-family:monospace;font-size:12px" readonly />
+            <button class="btn btn-outline" style="min-height:40px;padding:6px 12px" onclick="copyVapidField('vapid-public-out', 'VAPID_PUBLIC_KEY')">Copiar</button>
+          </div>
+
+          <label style="display:block;font-size:11px;font-weight:700;color:var(--muted)">VAPID_PRIVATE_KEY (secreta — solo va en Supabase Secrets, nunca en GitHub)</label>
+          <div style="display:flex;gap:6px;margin:4px 0 10px">
+            <input id="vapid-private-out" class="field" style="margin:0;font-family:monospace;font-size:12px" readonly />
+            <button class="btn btn-outline" style="min-height:40px;padding:6px 12px" onclick="copyVapidField('vapid-private-out', 'VAPID_PRIVATE_KEY')">Copiar</button>
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-confirm" style="flex:1" onclick="downloadVapidEnvFile()">⬇️ Descargar supabase-push-secrets.env</button>
+            <button class="btn btn-outline" style="flex:1" onclick="downloadDbConfigFile()">⬇️ Descargar db-config.js</button>
+            <button class="btn btn-outline" onclick="downloadVapidGuideFile()">⬇️ Descargar Guía (.txt)</button>
+            <button class="btn btn-danger" onclick="clearLocalVapidPrivateDraft()">🗑️ Limpiar clave privada local</button>
+          </div>
+        </div>
+
+        <div style="background:#FFF8EA;border:1px solid var(--gold);border-radius:14px;padding:12px;font-size:13px;line-height:1.55">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <strong>📘 Guía Rápida: Cargar en Supabase (Android &amp; iPhone)</strong>
+            <a id="supabase-secrets-link" class="btn btn-outline" href="https://supabase.com/dashboard" target="_blank" rel="noopener" style="min-height:34px;padding:5px 10px;font-size:12px">Abrir Supabase Secrets ↗</a>
+          </div>
+          <ol style="margin:0;padding-left:18px">
+            <li><strong>Generá y descargá:</strong> tocá <em>"⚡ Generar VAPID Keys y Descargar Archivos"</em> para bajar <code>supabase-push-secrets.env</code> y <code>db-config.js</code>.</li>
+            <li><strong>Subí los Secrets a Supabase:</strong> en tu proyecto de Supabase andá a <strong>Edge Functions → Secrets</strong> y cargá las 3 variables de <code>supabase-push-secrets.env</code> (<code>VAPID_PUBLIC_KEY</code>, <code>VAPID_PRIVATE_KEY</code>, <code>VAPID_SUBJECT</code>), o ejecutá por terminal:<br/>
+              <code style="display:inline-block;background:#fff;padding:3px 6px;border-radius:6px;margin-top:3px">supabase secrets set --env-file supabase-push-secrets.env &amp;&amp; supabase functions deploy order-status-push</code>
+            </li>
+            <li><strong>Activá el Database Webhook en Supabase:</strong> andá a <strong>Database → Webhooks → Create a new hook</strong>, elegí la tabla <code>public.order_status</code>, eventos <strong>INSERT</strong> y <strong>UPDATE</strong>, y tipo <strong>Supabase Edge Functions → order-status-push</strong>.</li>
+            <li><strong>Actualizá tu web pública:</strong> reemplazá <code>web-pwa/db-config.js</code> con el archivo descargado (o pegalo en el Secret <code>DB_CONFIG_JS</code> de GitHub) y hacé Push.</li>
+            <li><strong>Habilitá alertas en cada dispositivo:</strong>
+              <ul style="margin:4px 0 0;padding-left:16px">
+                <li><strong>Android (Chrome):</strong> abrí la tienda online, tocá <strong>🔔 Activar alertas</strong> y aceptá el permiso.</li>
+                <li><strong>iPhone (iOS 16.4+ Safari):</strong> abrí la tienda en <strong>Safari → Compartir ⬆️ → Agregar a pantalla de inicio</strong>, abrí la app desde el ícono instalado y tocá <strong>🔔 Activar alertas</strong>.</li>
+              </ul>
+            </li>
+          </ol>
+        </div>
+      </div>
+
+      <div id="db-status-banner" class="card" style="background:#FFF8EA;border:1px solid var(--gold);font-size:13px"></div>
+
       <div class="kpi-grid" id="kpi-grid"></div>
 
-      <h3 style="margin:4px 0 8px;font-size:15px;color:var(--muted)">Stock en vivo</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 8px">
+        <h3 style="margin:0;font-size:15px;color:var(--muted)">Stock en vivo</h3>
+        <button class="btn btn-outline" style="min-height:36px;padding:6px 12px;font-size:12px" onclick="refreshNow()">↻ Actualizar</button>
+      </div>
       <div class="stock-grid" id="stock-grid"></div>
 
       <div class="chips" id="filter-chips">
@@ -265,6 +332,36 @@
       </div>
 
       <div id="orders-list"></div>
+
+      <!-- Sección de Diagnóstico: Logs de Sistema -->
+      <section id="system-logs-card" class="card" style="margin-top:18px;border:1px solid var(--outline)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <div>
+            <strong style="font-size:16px">🩺 Logs de Sistema (Diagnóstico Supabase y Catálogo)</strong>
+            <div id="syslogs-summary" style="font-size:12px;color:var(--muted);margin-top:2px">
+              Registra errores de red, credenciales, tablas de Supabase o carga de productos sin abrir la consola del navegador.
+            </div>
+          </div>
+          <span id="syslogs-status-badge" class="badge badge-confirmed">Sin errores</span>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px">
+          <button id="run-diagnostics-btn" class="btn btn-primary" style="flex:1;min-width:200px" onclick="runSupabaseDiagnostics()">
+            🩺 Probar conexión y tablas Supabase
+          </button>
+          <button class="btn btn-outline" onclick="copySystemLogs()">📋 Copiar Logs</button>
+          <button class="btn btn-outline" onclick="clearSystemLogs()">🗑️ Limpiar</button>
+        </div>
+
+        <div class="chips" id="syslog-filter-chips" style="margin-bottom:10px">
+          <button class="chip active" data-log-filter="ALL" onclick="setSysLogFilter('ALL')">Todos</button>
+          <button class="chip" data-log-filter="ERROR" onclick="setSysLogFilter('ERROR')">Errores</button>
+          <button class="chip" data-log-filter="WARN" onclick="setSysLogFilter('WARN')">Advertencias</button>
+          <button class="chip" data-log-filter="INFO" onclick="setSysLogFilter('INFO')">Info</button>
+        </div>
+
+        <div id="syslogs-list"></div>
+      </section>
     </section>
   </main>
 
@@ -272,7 +369,14 @@
 
   <script type="module">
     const BOOTSTRAP_ADMIN_EMAIL = "alejandromoises89@gmail.com";
-    const DATABASE_ID = window.PIZZA_CLUB_DATABASE_ID || "ai-studio-android-pizzaclu-26d3b8a1-697e-40e6-a619-f86f22ddfb34";
+    const DEFAULT_PIN = "2026";
+    const ADMIN_PIN_KEY = "pizza_club_admin_pin_v1";
+    const ADMIN_SESSION_KEY = "pizza_club_admin_unlocked_v1";
+    const DB_CONFIG_OVERRIDE_KEY = "pizza_club_db_config_v1";
+    const VAPID_DRAFT_KEY = "pizza_club_vapid_draft_v1";
+    const SYSTEM_LOGS_KEY = "pizza_club_system_logs_v1";
+    const FACEID_CRED_KEY = "pizza_club_admin_webauthn_cred_v1";
+    const LOCAL_ORDERS_KEY = "pizza_club_order_history_v1";
 
     const STATUS_LABELS = {
       PENDING_PAYMENT: { text: "Pendiente de pago", cls: "badge-pending" },
@@ -284,14 +388,14 @@
       CANCELLED: { text: "Cancelado", cls: "badge-cancelled" }
     };
 
-    let fb = null;
-    let currentUser = null;
+    let supabaseCfg = null;
+    let pollTimer = null;
     let currentFilter = "ALL";
+    let currentSysLogFilter = "ALL";
     let allOrders = [];
     let inventoryRows = [];
-    let unsubOrders = null;
-    let unsubInventory = null;
     let busyOrderId = null;
+    let lastRefreshErrorSig = "";
 
     const fmt = (n) => "Gs. " + Number(n || 0).toLocaleString("es-PY");
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
@@ -305,14 +409,14 @@
     }
 
     function showSection(id) {
-      ["config-missing-view", "login-view", "unauthorized-view", "dashboard-view"].forEach((s) => {
+      ["login-view", "dashboard-view"].forEach((s) => {
         document.getElementById(s).style.display = s === id ? "block" : "none";
       });
     }
 
-    function formatTimestamp(ts) {
+    function formatTimestamp(msOrIso) {
       try {
-        const d = ts && typeof ts.toDate === "function" ? ts.toDate() : new Date(ts);
+        const d = new Date(msOrIso);
         if (isNaN(d.getTime())) return "";
         return d.toLocaleString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
       } catch {
@@ -334,18 +438,69 @@
       return prefix + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     }
 
-    window.setFilter = function (filter) {
-      currentFilter = filter;
-      document.querySelectorAll("#filter-chips .chip").forEach((c) => {
-        c.classList.toggle("active", c.dataset.filter === filter);
+    function getEffectivePin() {
+      const saved = (localStorage.getItem(ADMIN_PIN_KEY) || "").trim();
+      return saved.length >= 4 ? saved : DEFAULT_PIN;
+    }
+
+    function isValidDbConfig(cfg) {
+      if (!cfg || typeof cfg !== "object") return false;
+      const url = String(cfg.url || "").trim().replace(/\/+$/, "");
+      const anonKey = String(cfg.anonKey || "").trim();
+      const placeholderRe = /YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_|PEG[AÁ]|TU_/i;
+      if (!/^https:\/\/[a-z0-9.-]+/i.test(url) || placeholderRe.test(url)) return false;
+      if (anonKey.length <= 20 || placeholderRe.test(anonKey)) return false;
+      return true;
+    }
+
+    function getEffectiveDbConfig() {
+      const defaultVapid = String(window.PIZZA_CLUB_DB_CONFIG?.vapidPublicKey || "").trim();
+      try {
+        const raw = localStorage.getItem(DB_CONFIG_OVERRIDE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (isValidDbConfig(parsed)) {
+            return {
+              url: parsed.url.trim().replace(/\/+$/, ""),
+              anonKey: parsed.anonKey.trim(),
+              vapidPublicKey: String(parsed.vapidPublicKey || defaultVapid).trim()
+            };
+          }
+        }
+      } catch {
+        // Ignore invalid local override
+      }
+      if (isValidDbConfig(window.PIZZA_CLUB_DB_CONFIG)) {
+        return {
+          url: window.PIZZA_CLUB_DB_CONFIG.url.trim().replace(/\/+$/, ""),
+          anonKey: window.PIZZA_CLUB_DB_CONFIG.anonKey.trim(),
+          vapidPublicKey: defaultVapid
+        };
+      }
+      return null;
+    }
+
+    async function sbFetch(pathWithQuery, options = {}) {
+      if (!supabaseCfg) throw new Error("Base de datos online no configurada");
+      const headers = {
+        apikey: supabaseCfg.anonKey,
+        Authorization: `Bearer ${supabaseCfg.anonKey}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      };
+      const res = await fetch(`${supabaseCfg.url}/rest/v1/${pathWithQuery}`, {
+        ...options,
+        headers
       });
-      renderDashboard();
-    };
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
+      }
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
 
-    const FACEID_CRED_KEY = "pizza_club_admin_webauthn_cred_v1";
-    const FACEID_LOCK_KEY = "pizza_club_admin_faceid_locked_v1";
-    let faceIdUnlockedThisTab = localStorage.getItem(FACEID_LOCK_KEY) !== "true";
-
+    // --- Face ID / WebAuthn Helpers ---
     function bufToBase64Url(buf) {
       const bytes = new Uint8Array(buf);
       let str = "";
@@ -370,125 +525,65 @@
       }
     }
 
-    function updateFaceIdUiState(user) {
-      const topBtn = document.getElementById("faceid-setup-btn");
-      const loginBtnLabel = document.getElementById("faceid-btn-label");
-      const loginSub = document.getElementById("login-subtitle");
+    function updateTopbarUi(unlocked) {
+      const signOutBtn = document.getElementById("signout-btn");
+      const dbBtn = document.getElementById("db-settings-btn");
+      const vapidBtn = document.getElementById("vapid-settings-btn");
+      const faceBtn = document.getElementById("faceid-setup-btn");
+      const userLabel = document.getElementById("admin-user-label");
       const enrolled = getEnrolledFaceId();
-      if (topBtn) {
-        if (user && window.PublicKeyCredential) {
-          topBtn.style.display = "inline-flex";
-          topBtn.textContent = enrolled ? "🔒 Bloquear (Face ID)" : "🧬 Activar Face ID";
-        } else {
-          topBtn.style.display = "none";
-        }
+
+      signOutBtn.style.display = unlocked ? "inline-flex" : "none";
+      dbBtn.style.display = unlocked ? "inline-flex" : "none";
+      if (vapidBtn) vapidBtn.style.display = unlocked ? "inline-flex" : "none";
+      const sysLogsBtn = document.getElementById("syslogs-btn");
+      if (sysLogsBtn) sysLogsBtn.style.display = unlocked ? "inline-flex" : "none";
+      faceBtn.style.display = unlocked && window.PublicKeyCredential ? "inline-flex" : "none";
+      updateSysLogsTopbarBadge();
+      if (faceBtn) {
+        faceBtn.textContent = enrolled ? "🧬 Face ID activo" : "🧬 Activar Face ID";
       }
-      if (loginBtnLabel) {
-        loginBtnLabel.textContent = (user && enrolled)
+      userLabel.textContent = unlocked
+        ? (supabaseCfg ? "Admin · Base Online conectada" : "Admin · Modo Local")
+        : "Acceso por PIN o Face ID / Biometría";
+
+      const faceLabel = document.getElementById("faceid-btn-label");
+      if (faceLabel) {
+        faceLabel.textContent = enrolled
           ? "Desbloquear con Face ID / Biometría"
-          : "Iniciar con Face ID / Biometría";
-      }
-      if (loginSub) {
-        loginSub.innerHTML = (user && enrolled)
-          ? `Sesión vinculada (<code>${esc(user.email || user.uid)}</code>). Desbloqueá con <strong>Face ID / Biometría</strong> o cambiá de cuenta con Google o Apple.`
-          : `Iniciá sesión con <strong>Google</strong>, <strong>Apple</strong> o <strong>Face ID / Biometría</strong> (<code>alejandromoises89@gmail.com</code>) para confirmar pagos y gestionar pedidos.`;
+          : "Activar Face ID (ingresá con PIN primero)";
       }
     }
 
-    function setAuthButtonsDisabled(disabled) {
-      ["google-signin-btn", "apple-signin-btn", "faceid-signin-btn"].forEach((id) => {
-        const b = document.getElementById(id);
-        if (b) b.disabled = disabled;
-      });
-    }
-
-    function formatAuthError(err, providerLabel) {
-      const code = String(err?.code || "");
-      const msg = String(err?.message || "");
-      const fixBtn = document.getElementById("fix-config-btn");
-      if (
-        code === "auth/api-key-not-valid" ||
-        msg.includes("api-key-not-valid") ||
-        msg.includes("API_KEY_ANDROID_APP_RESTRICTED") ||
-        code === "auth/requests-from-referer" ||
-        msg.includes("requests-from-referer")
-      ) {
-        if (fixBtn) fixBtn.style.display = "inline-flex";
-        return "La clave Web (apiKey) de Firebase no es válida o está restringida para Web. Tocá el botón de abajo para pegar el firebaseConfig de tu App Web desde Firebase Console.";
-      }
-      if (code === "auth/unauthorized-domain") {
-        return `El dominio actual (${location.hostname}) no está autorizado en Firebase. Agregalo en Firebase Console → Authentication → Settings → Authorized domains.`;
-      }
-      if (code === "auth/popup-closed-by-user") {
-        return "Cerraste la ventana de inicio de sesión antes de terminar.";
-      }
-      if (code === "auth/operation-not-allowed") {
-        return `Activá el proveedor ${providerLabel} en Firebase Console → Authentication → Sign-in method.`;
-      }
-      return `No se pudo iniciar sesión con ${providerLabel}: ${msg || code || "Error"}`;
-    }
-
-    window.handleGoogleSignIn = async function () {
-      if (!fb) return;
+    window.handlePinLogin = function () {
+      const pinInput = document.getElementById("admin-pin-input");
       const errEl = document.getElementById("login-error");
-      const fixBtn = document.getElementById("fix-config-btn");
       errEl.style.display = "none";
-      if (fixBtn) fixBtn.style.display = "none";
-      setAuthButtonsDisabled(true);
-      try {
-        faceIdUnlockedThisTab = true;
-        localStorage.setItem(FACEID_LOCK_KEY, "false");
-        await fb.signInWithPopup(fb.auth, fb.provider);
-      } catch (err) {
-        if (err && (err.code === "auth/popup-blocked" || err.code === "auth/operation-not-supported-in-this-environment")) {
-          await fb.signInWithRedirect(fb.auth, fb.provider);
-          return;
-        }
-        errEl.textContent = formatAuthError(err, "Google");
+      const entered = (pinInput?.value || "").trim();
+      if (entered !== getEffectivePin()) {
+        errEl.textContent = "PIN incorrecto. Verificá tu código de propietario.";
         errEl.style.display = "block";
-      } finally {
-        setAuthButtonsDisabled(false);
+        return;
       }
-    };
-
-    window.handleAppleSignIn = async function () {
-      if (!fb) return;
-      const errEl = document.getElementById("login-error");
-      const fixBtn = document.getElementById("fix-config-btn");
-      errEl.style.display = "none";
-      if (fixBtn) fixBtn.style.display = "none";
-      setAuthButtonsDisabled(true);
-      try {
-        faceIdUnlockedThisTab = true;
-        localStorage.setItem(FACEID_LOCK_KEY, "false");
-        await fb.signInWithPopup(fb.auth, fb.appleProvider);
-      } catch (err) {
-        if (err && (err.code === "auth/popup-blocked" || err.code === "auth/operation-not-supported-in-this-environment")) {
-          await fb.signInWithRedirect(fb.auth, fb.appleProvider);
-          return;
-        }
-        errEl.textContent = formatAuthError(err, "Apple");
-        errEl.style.display = "block";
-      } finally {
-        setAuthButtonsDisabled(false);
-      }
+      if (pinInput) pinInput.value = "";
+      sessionStorage.setItem(ADMIN_SESSION_KEY, "true");
+      enterDashboard();
     };
 
     window.handleFaceIdSignIn = async function () {
       const errEl = document.getElementById("login-error");
       errEl.style.display = "none";
       if (!window.PublicKeyCredential) {
-        errEl.textContent = "Este navegador no soporta WebAuthn / Face ID. Usá Google o Apple.";
+        errEl.textContent = "Este navegador no soporta Face ID / WebAuthn. Ingresá con tu PIN.";
         errEl.style.display = "block";
         return;
       }
       const enrolled = getEnrolledFaceId();
-      if (!currentUser || !enrolled) {
-        errEl.textContent = "Para usar Face ID / Biometría primero iniciá sesión una vez con Google o Apple y tocá 'Activar Face ID' en la barra superior.";
+      if (!enrolled) {
+        errEl.textContent = "Ingresá una primera vez con tu PIN y tocá '🧬 Activar Face ID' en la barra superior.";
         errEl.style.display = "block";
         return;
       }
-      setAuthButtonsDisabled(true);
       try {
         const challenge = new Uint8Array(32);
         crypto.getRandomValues(challenge);
@@ -505,33 +600,18 @@
         if (clientData.challenge !== bufToBase64Url(challenge.buffer)) {
           throw new Error("Desafío biométrico inválido.");
         }
-        faceIdUnlockedThisTab = true;
-        localStorage.setItem(FACEID_LOCK_KEY, "false");
-        await window.evaluateAuthGate(currentUser);
+        sessionStorage.setItem(ADMIN_SESSION_KEY, "true");
+        enterDashboard();
         showToast("🔓 Panel desbloqueado con Face ID / Biometría");
       } catch (err) {
         errEl.textContent = "No se pudo verificar Face ID / Biometría: " + (err?.message || "Cancelado");
         errEl.style.display = "block";
-      } finally {
-        setAuthButtonsDisabled(false);
       }
     };
 
     window.handleTopbarFaceIdAction = async function () {
-      if (!currentUser) return;
-      const enrolled = getEnrolledFaceId();
-      if (enrolled) {
-        if (unsubOrders) { unsubOrders(); unsubOrders = null; }
-        if (unsubInventory) { unsubInventory(); unsubInventory = null; }
-        faceIdUnlockedThisTab = false;
-        localStorage.setItem(FACEID_LOCK_KEY, "true");
-        updateFaceIdUiState(currentUser);
-        showSection("login-view");
-        showToast("🔒 Panel bloqueado con Face ID");
-        return;
-      }
       if (!window.PublicKeyCredential) {
-        alert("Este dispositivo/navegador no admite Face ID / WebAuthn.");
+        alert("Este navegador no admite Face ID / WebAuthn.");
         return;
       }
       try {
@@ -542,15 +622,15 @@
         }
         const challenge = new Uint8Array(32);
         crypto.getRandomValues(challenge);
-        const userBytes = new TextEncoder().encode(currentUser.uid);
+        const userBytes = new TextEncoder().encode("pizza_club_admin");
         const credential = await navigator.credentials.create({
           publicKey: {
             challenge,
             rp: { name: "Pizza Club Admin", id: location.hostname },
             user: {
               id: userBytes,
-              name: currentUser.email || currentUser.uid,
-              displayName: currentUser.displayName || "Admin Pizza Club"
+              name: BOOTSTRAP_ADMIN_EMAIL,
+              displayName: "Admin Pizza Club"
             },
             pubKeyCredParams: [
               { type: "public-key", alg: -7 },
@@ -565,106 +645,756 @@
         });
         if (!credential) return;
         localStorage.setItem(FACEID_CRED_KEY, JSON.stringify({
-          credId: bufToBase64Url(credential.rawId),
-          email: currentUser.email || ""
+          credId: bufToBase64Url(credential.rawId)
         }));
-        localStorage.setItem(FACEID_LOCK_KEY, "false");
-        updateFaceIdUiState(currentUser);
+        updateTopbarUi(true);
         showToast("✅ Face ID / Biometría vinculado para próximos ingresos");
       } catch (err) {
         alert("No se pudo activar Face ID: " + (err?.message || err));
       }
     };
 
-    window.handleSignOut = async function () {
-      if (!fb) return;
-      if (unsubOrders) { unsubOrders(); unsubOrders = null; }
-      if (unsubInventory) { unsubInventory(); unsubInventory = null; }
-      localStorage.removeItem(FACEID_LOCK_KEY);
-      faceIdUnlockedThisTab = true;
-      await fb.signOut(fb.auth);
+    window.handleSignOut = function () {
+      sessionStorage.removeItem(ADMIN_SESSION_KEY);
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      updateTopbarUi(false);
+      showSection("login-view");
+    };
+
+    window.toggleDbSetupCard = function (forceState) {
+      const card = document.getElementById("db-config-card");
+      if (!card) return;
+      const shouldShow = typeof forceState === "boolean" ? forceState : card.style.display === "none";
+      card.style.display = shouldShow ? "block" : "none";
+      if (shouldShow) {
+        const currentVapid = supabaseCfg?.vapidPublicKey || getVapidDraft()?.publicKey || "";
+        if (supabaseCfg) {
+          document.getElementById("sb-url-input").value = supabaseCfg.url;
+          document.getElementById("sb-key-input").value = supabaseCfg.anonKey;
+        }
+        const vapidInput = document.getElementById("sb-vapid-input");
+        if (vapidInput) vapidInput.value = currentVapid;
+      }
+    };
+
+    window.saveSupabaseConfig = async function () {
+      const url = (document.getElementById("sb-url-input")?.value || "").trim().replace(/\/+$/, "");
+      const anonKey = (document.getElementById("sb-key-input")?.value || "").trim();
+      const vapidPublicKey = (document.getElementById("sb-vapid-input")?.value || "").trim();
+      const errEl = document.getElementById("db-config-error");
+      errEl.style.display = "none";
+      if (!isValidDbConfig({ url, anonKey })) {
+        errEl.textContent = "Ingresá un Project URL válido (https://...supabase.co) y una Anon Key válida.";
+        errEl.style.display = "block";
+        return;
+      }
+      const nextCfg = {
+        url,
+        anonKey,
+        vapidPublicKey: vapidPublicKey || supabaseCfg?.vapidPublicKey || getVapidDraft()?.publicKey || ""
+      };
+      localStorage.setItem(DB_CONFIG_OVERRIDE_KEY, JSON.stringify(nextCfg));
+      supabaseCfg = nextCfg;
+      document.getElementById("db-config-card").style.display = "none";
+      updateTopbarUi(true);
+      await refreshNow();
+      showToast("✅ Base de datos online conectada");
+    };
+
+    window.clearSupabaseConfig = function () {
+      localStorage.removeItem(DB_CONFIG_OVERRIDE_KEY);
+      supabaseCfg = getEffectiveDbConfig();
+      document.getElementById("sb-url-input").value = "";
+      document.getElementById("sb-key-input").value = "";
+      const vapidInput = document.getElementById("sb-vapid-input");
+      if (vapidInput) vapidInput.value = "";
+      updateTopbarUi(true);
+      refreshNow();
+      showToast("Configuración local borrada");
+    };
+
+    // --- VAPID Keypair Generator & Supabase Push Setup Downloader ---
+    function getVapidDraft() {
+      try {
+        const raw = localStorage.getItem(VAPID_DRAFT_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return parsed && parsed.publicKey && parsed.privateKey ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function updateSupabaseSecretsDashboardLink() {
+      const linkEl = document.getElementById("supabase-secrets-link");
+      if (!linkEl) return;
+      const cfg = supabaseCfg || getEffectiveDbConfig();
+      if (cfg?.url && cfg.url.includes(".supabase.co")) {
+        const ref = cfg.url.replace(/^https?:\/\//i, "").split(".supabase.co")[0];
+        if (ref) {
+          linkEl.href = `https://supabase.com/dashboard/project/${encodeURIComponent(ref)}/functions/secrets`;
+          return;
+        }
+      }
+      linkEl.href = "https://supabase.com/dashboard";
+    }
+
+    function renderVapidDraftUi() {
+      const draft = getVapidDraft();
+      const preview = document.getElementById("vapid-keys-preview");
+      const subjectInput = document.getElementById("vapid-subject-input");
+      updateSupabaseSecretsDashboardLink();
+      if (!preview) return;
+      if (!draft) {
+        preview.style.display = "none";
+        return;
+      }
+      preview.style.display = "block";
+      document.getElementById("vapid-public-out").value = draft.publicKey;
+      document.getElementById("vapid-private-out").value = draft.privateKey;
+      if (subjectInput && draft.subject) {
+        subjectInput.value = draft.subject;
+      }
+    }
+
+    window.toggleVapidSetupCard = function (forceState) {
+      const card = document.getElementById("vapid-setup-card");
+      if (!card) return;
+      const shouldShow = typeof forceState === "boolean" ? forceState : card.style.display === "none";
+      card.style.display = shouldShow ? "block" : "none";
+      if (shouldShow) {
+        renderVapidDraftUi();
+        card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    };
+
+    async function createVapidKeyPairInBrowser() {
+      if (!window.crypto?.subtle) {
+        throw new Error("Este navegador requiere HTTPS para generar claves VAPID.");
+      }
+      const keyPair = await crypto.subtle.generateKey(
+        { name: "ECDSA", namedCurve: "P-256" },
+        true,
+        ["sign", "verify"]
+      );
+      const rawPub = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+      const jwkPriv = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
+      const subjectVal = (document.getElementById("vapid-subject-input")?.value || "").trim() || `mailto:${BOOTSTRAP_ADMIN_EMAIL}`;
+      const draft = {
+        publicKey: bufToBase64Url(rawPub),
+        privateKey: String(jwkPriv.d || "").replace(/=+$/g, ""),
+        subject: subjectVal,
+        createdAt: new Date().toISOString()
+      };
+      localStorage.setItem(VAPID_DRAFT_KEY, JSON.stringify(draft));
+
+      // Also persist public key into browser DB config if already saved
+      try {
+        const rawDb = localStorage.getItem(DB_CONFIG_OVERRIDE_KEY);
+        const existingDb = rawDb ? JSON.parse(rawDb) : (supabaseCfg || {});
+        if (existingDb && existingDb.url && existingDb.anonKey) {
+          const updatedDb = {
+            url: existingDb.url,
+            anonKey: existingDb.anonKey,
+            vapidPublicKey: draft.publicKey
+          };
+          localStorage.setItem(DB_CONFIG_OVERRIDE_KEY, JSON.stringify(updatedDb));
+          supabaseCfg = updatedDb;
+        }
+      } catch {
+        // Ignore non-critical sync
+      }
+      const sbVapidInput = document.getElementById("sb-vapid-input");
+      if (sbVapidInput) sbVapidInput.value = draft.publicKey;
+      renderVapidDraftUi();
+      return draft;
+    }
+
+    function triggerTextFileDownload(filename, content, mimeType = "text/plain;charset=utf-8") {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
+    function buildSupabaseSecretsEnv(draft) {
+      return [
+        "# Subir en Supabase Dashboard -> Edge Functions -> Secrets",
+        "# O por CLI: supabase secrets set --env-file supabase-push-secrets.env",
+        `VAPID_PUBLIC_KEY=${draft.publicKey}`,
+        `VAPID_PRIVATE_KEY=${draft.privateKey}`,
+        `VAPID_SUBJECT=${draft.subject || `mailto:${BOOTSTRAP_ADMIN_EMAIL}`}`,
+        ""
+      ].join("\n");
+    }
+
+    function buildDbConfigJsContent(draft) {
+      const cfg = supabaseCfg || getEffectiveDbConfig() || {
+        url: "https://YOUR_PROJECT.supabase.co",
+        anonKey: "YOUR_SUPABASE_ANON_KEY"
+      };
+      const escJs = (v) => String(v || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"").replace(/[\r\n]/g, "");
+      return [
+        "// Configuración de base de datos online (Supabase PostgreSQL REST) — SIN FIREBASE.",
+        "// Reemplazá web-pwa/db-config.js con este archivo o cargalo en GitHub Secret DB_CONFIG_JS.",
+        "window.PIZZA_CLUB_DB_CONFIG = {",
+        `  url: "${escJs(cfg.url)}",`,
+        `  anonKey: "${escJs(cfg.anonKey)}",`,
+        `  vapidPublicKey: "${escJs(draft.publicKey)}"`,
+        "};",
+        ""
+      ].join("\n");
+    }
+
+    function buildVapidGuideTxt(draft) {
+      const cfg = supabaseCfg || getEffectiveDbConfig();
+      const ref = cfg?.url && cfg.url.includes(".supabase.co")
+        ? cfg.url.replace(/^https?:\/\//i, "").split(".supabase.co")[0]
+        : "TU_PROJECT_REF";
+      return [
+        "PIZZA CLUB — GUIA RAPIDA DE NOTIFICACIONES PUSH (ANDROID & IPHONE)",
+        "======================================================================",
+        "",
+        "1) CLAVES VAPID GENERADAS (ECDSA P-256)",
+        `   VAPID_PUBLIC_KEY=${draft.publicKey}`,
+        `   VAPID_PRIVATE_KEY=${draft.privateKey}`,
+        `   VAPID_SUBJECT=${draft.subject || `mailto:${BOOTSTRAP_ADMIN_EMAIL}`}`,
+        "",
+        "2) CARGAR EN SUPABASE (EDGE FUNCTIONS -> SECRETS)",
+        `   Panel web: https://supabase.com/dashboard/project/${ref}/functions/secrets`,
+        "   Agregá las 3 variables de supabase-push-secrets.env:",
+        "   - VAPID_PUBLIC_KEY",
+        "   - VAPID_PRIVATE_KEY",
+        "   - VAPID_SUBJECT",
+        "   O con Supabase CLI:",
+        "   supabase secrets set --env-file supabase-push-secrets.env",
+        "   supabase functions deploy order-status-push",
+        "",
+        "3) CREAR WEBHOOK EN SUPABASE",
+        "   Database -> Webhooks -> Create a new hook",
+        "   - Tabla: public.order_status",
+        "   - Eventos: INSERT y UPDATE",
+        "   - Type: Supabase Edge Functions -> order-status-push",
+        "",
+        "4) ACTIVAR EN GITHUB PAGES (web-pwa/db-config.js)",
+        "   Reemplazá web-pwa/db-config.js con el db-config.js descargado (o pegalo en Secret DB_CONFIG_JS) y hacé Push.",
+        "",
+        "5) PROBAR EN ANDROID E IPHONE",
+        "   - Android (Chrome): abrí el sitio web, tocá 'Activar alertas' y aceptá permisos.",
+        "   - iPhone (iOS 16.4+ Safari): abrí el sitio en Safari -> Compartir -> 'Agregar a pantalla de inicio',",
+        "     abrí la app desde el ícono instalado y tocá 'Activar alertas'.",
+        ""
+      ].join("\n");
+    }
+
+    window.generateVapidPairOnly = async function () {
+      try {
+        await createVapidKeyPairInBrowser();
+        await refreshNow();
+        showToast("🔑 Nuevas claves VAPID generadas");
+      } catch (err) {
+        alert("No se pudieron generar las claves VAPID: " + (err?.message || err));
+      }
+    };
+
+    window.generateAndDownloadVapidPack = async function () {
+      try {
+        const draft = await createVapidKeyPairInBrowser();
+        triggerTextFileDownload("supabase-push-secrets.env", buildSupabaseSecretsEnv(draft), "text/plain;charset=utf-8");
+        setTimeout(() => {
+          triggerTextFileDownload("db-config.js", buildDbConfigJsContent(draft), "application/javascript;charset=utf-8");
+        }, 300);
+        await refreshNow();
+        showToast("⚡ Claves VAPID generadas y archivos descargados");
+      } catch (err) {
+        alert("No se pudo generar el pack VAPID: " + (err?.message || err));
+      }
+    };
+
+    window.downloadVapidEnvFile = function () {
+      const draft = getVapidDraft();
+      if (!draft) { alert("Generá primero las claves VAPID."); return; }
+      triggerTextFileDownload("supabase-push-secrets.env", buildSupabaseSecretsEnv(draft), "text/plain;charset=utf-8");
+      showToast("⬇️ Descargado supabase-push-secrets.env");
+    };
+
+    window.downloadDbConfigFile = function () {
+      const draft = getVapidDraft();
+      if (!draft) { alert("Generá primero las claves VAPID."); return; }
+      triggerTextFileDownload("db-config.js", buildDbConfigJsContent(draft), "application/javascript;charset=utf-8");
+      showToast("⬇️ Descargado db-config.js");
+    };
+
+    window.downloadVapidGuideFile = function () {
+      const draft = getVapidDraft();
+      if (!draft) { alert("Generá primero las claves VAPID."); return; }
+      triggerTextFileDownload("GUIA-SUPABASE-PUSH.txt", buildVapidGuideTxt(draft), "text/plain;charset=utf-8");
+      showToast("⬇️ Descargada GUIA-SUPABASE-PUSH.txt");
+    };
+
+    window.copyVapidField = async function (inputId, label) {
+      const val = document.getElementById(inputId)?.value || "";
+      if (!val) return;
+      try {
+        await navigator.clipboard.writeText(val);
+        showToast(`📋 ${label} copiada`);
+      } catch {
+        const el = document.getElementById(inputId);
+        el?.select();
+        document.execCommand("copy");
+        showToast(`📋 ${label} copiada`);
+      }
+    };
+
+    window.clearLocalVapidPrivateDraft = function () {
+      localStorage.removeItem(VAPID_DRAFT_KEY);
+      renderVapidDraftUi();
+      showToast("🗑️ Clave privada eliminada del navegador");
+    };
+
+    window.changeAdminPin = function () {
+      const val = (document.getElementById("new-pin-input")?.value || "").replace(/\D/g, "");
+      if (val.length < 4) {
+        alert("El PIN debe tener al menos 4 dígitos.");
+        return;
+      }
+      localStorage.setItem(ADMIN_PIN_KEY, val);
+      document.getElementById("new-pin-input").value = "";
+      showToast("🔑 PIN de administrador actualizado");
+    };
+
+    // --- System Logs & Supabase Connectivity Diagnostics ---
+    function buildSystemDiagnosticHint(rawText) {
+      const s = String(rawText || "").toLowerCase();
+      if (/401|403|invalid api key|jwt|permission denied/.test(s)) {
+        return "Verificá la Anon Key de Supabase en Base Online y las políticas RLS de supabase_schema.sql.";
+      }
+      if (/404|pgrst205|does not exist|relation/.test(s)) {
+        return "Falta crear la tabla en Supabase: ejecutá supabase_schema.sql en el SQL Editor.";
+      }
+      if (/failed to fetch|networkerror|load failed|network|dns|err_name/.test(s)) {
+        return "Revisá tu conexión a internet o que la URL https://...supabase.co sea válida.";
+      }
+      if (/json|unexpected token/.test(s)) {
+        return "La respuesta del servidor no tuvo formato JSON válido (verificá la Project URL).";
+      }
+      return "";
+    }
+
+    function readSystemLogs() {
+      try {
+        const raw = localStorage.getItem(SYSTEM_LOGS_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function recordSystemLog(level, source, message, detail = "", endpoint = "") {
+      try {
+        const list = readSystemLogs();
+        const detailStr = detail ? String(detail?.message || detail).slice(0, 320) : "";
+        const entry = {
+          id: "slog_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6),
+          ts: Date.now(),
+          level: level || "ERROR",
+          source: String(source || "Admin").slice(0, 60),
+          message: String(message || "").slice(0, 220),
+          detail: detailStr,
+          endpoint: String(endpoint || "").slice(0, 120),
+          hint: level === "INFO" ? "" : buildSystemDiagnosticHint(`${message} ${detailStr}`)
+        };
+        const top = list[0];
+        if (top && top.level === entry.level && top.source === entry.source && top.message === entry.message && (entry.ts - top.ts) < 30000) {
+          top.ts = entry.ts;
+          top.detail = entry.detail || top.detail;
+        } else {
+          list.unshift(entry);
+        }
+        localStorage.setItem(SYSTEM_LOGS_KEY, JSON.stringify(list.slice(0, 80)));
+      } catch {
+        // Ignore storage quota issues
+      }
+      updateSysLogsTopbarBadge();
+      renderSystemLogs();
+    }
+
+    function updateSysLogsTopbarBadge() {
+      const btn = document.getElementById("syslogs-btn");
+      if (!btn) return;
+      const errCount = readSystemLogs().filter((l) => l.level === "ERROR").length;
+      btn.textContent = errCount > 0 ? `🩺 Logs (${errCount})` : "🩺 Logs";
+      btn.style.background = errCount > 0 ? "rgba(200, 61, 45, 0.85)" : "rgba(255,255,255,0.14)";
+    }
+
+    window.focusSystemLogsCard = function () {
+      renderSystemLogs();
+      const card = document.getElementById("system-logs-card");
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
+    window.setSysLogFilter = function (filter) {
+      currentSysLogFilter = filter;
+      document.querySelectorAll("#syslog-filter-chips .chip").forEach((c) => {
+        c.classList.toggle("active", c.dataset.logFilter === filter);
+      });
+      renderSystemLogs();
+    };
+
+    window.clearSystemLogs = function () {
+      localStorage.removeItem(SYSTEM_LOGS_KEY);
+      lastRefreshErrorSig = "";
+      updateSysLogsTopbarBadge();
+      renderSystemLogs();
+      showToast("🗑️ Logs de sistema limpiados");
+    };
+
+    window.copySystemLogs = async function () {
+      const logs = readSystemLogs();
+      const filtered = currentSysLogFilter === "ALL" ? logs : logs.filter((l) => l.level === currentSysLogFilter);
+      const text = filtered.length === 0
+        ? "Sin logs de sistema registrados."
+        : filtered.map((l) => {
+            const parts = [`[${formatTimestamp(l.ts)}] [${l.level}] ${l.source}: ${l.message}`];
+            if (l.endpoint) parts.push(`Endpoint: ${l.endpoint}`);
+            if (l.detail) parts.push(`Detalle: ${l.detail}`);
+            if (l.hint) parts.push(`Sugerencia: ${l.hint}`);
+            return parts.join("\n");
+          }).join("\n\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast("📋 Logs copiados al portapapeles");
+      } catch {
+        prompt("Copiá los logs de diagnóstico:", text);
+      }
+    };
+
+    window.runSupabaseDiagnostics = async function () {
+      const btn = document.getElementById("run-diagnostics-btn");
+      if (btn) { btn.disabled = true; btn.textContent = "Probando tablas..."; }
+      try {
+        if (!supabaseCfg) {
+          recordSystemLog("WARN", "Diagnóstico Supabase", "No hay URL y Anon Key de Supabase configuradas todavía.", "Completá 🔌 Base Online o web-pwa/db-config.js.");
+          showToast("⚠️ Configurá primero URL y Key de Supabase");
+          return;
+        }
+        const checks = [
+          { name: "products", path: "products?select=id,name,active&limit=50" },
+          { name: "inventory", path: "inventory?select=id,stock&limit=50" },
+          { name: "orders", path: "orders?select=id&limit=10" },
+          { name: "order_status", path: "order_status?select=id&limit=10" },
+          { name: "business_settings", path: "business_settings?select=id&limit=5" }
+        ];
+        const failures = [];
+        const summary = [];
+        for (const c of checks) {
+          const t0 = performance.now();
+          try {
+            const rows = await sbFetch(c.path);
+            const ms = Math.round(performance.now() - t0);
+            const count = Array.isArray(rows) ? rows.length : 0;
+            summary.push(`${c.name}: OK (${count} filas, ${ms}ms)`);
+            if (c.name === "products" && count === 0) {
+              recordSystemLog("WARN", "Diagnóstico Productos", "La tabla products en Supabase está vacía (0 productos).", "Verificá los inserts iniciales en supabase_schema.sql.", c.path);
+            }
+          } catch (err) {
+            failures.push(c.name);
+            recordSystemLog("ERROR", `Diagnóstico ${c.name}`, `Fallo al consultar tabla ${c.name} en Supabase`, err, c.path);
+          }
+        }
+        if (failures.length === 0) {
+          recordSystemLog("INFO", "Diagnóstico Supabase", "Todas las tablas respondieron correctamente", summary.join(" · "));
+          showToast("✅ Conexión Supabase OK");
+        } else {
+          showToast(`⚠️ Fallaron: ${failures.join(", ")}`);
+        }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "🩺 Probar conexión y tablas Supabase"; }
+      }
+    };
+
+    function renderSystemLogs() {
+      const listEl = document.getElementById("syslogs-list");
+      const badgeEl = document.getElementById("syslogs-status-badge");
+      const summaryEl = document.getElementById("syslogs-summary");
+      if (!listEl) return;
+
+      const allLogs = readSystemLogs();
+      const errCount = allLogs.filter((l) => l.level === "ERROR").length;
+      const warnCount = allLogs.filter((l) => l.level === "WARN").length;
+
+      if (badgeEl) {
+        badgeEl.className = errCount > 0 ? "badge badge-cancelled" : (warnCount > 0 ? "badge badge-pending" : "badge badge-confirmed");
+        badgeEl.textContent = errCount > 0 ? `${errCount} errores` : (warnCount > 0 ? `${warnCount} advertencias` : "Sin errores");
+      }
+      if (summaryEl) {
+        summaryEl.textContent = allLogs.length === 0
+          ? "Sin incidencias registradas. Cualquier error de Supabase o catálogo aparecerá acá automáticamente."
+          : `Total registrados: ${allLogs.length} (${errCount} errores, ${warnCount} advertencias).`;
+      }
+
+      const filtered = currentSysLogFilter === "ALL"
+        ? allLogs
+        : allLogs.filter((l) => l.level === currentSysLogFilter);
+
+      if (filtered.length === 0) {
+        listEl.innerHTML = `<div style="background:#FAF7F2;border-radius:12px;padding:16px;text-align:center;font-size:13px;color:var(--muted)">
+          ✅ No hay eventos en esta categoría.
+        </div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map((l) => {
+        const badgeCls = l.level === "ERROR" ? "badge-cancelled" : (l.level === "WARN" ? "badge-pending" : "badge-confirmed");
+        const borderCol = l.level === "ERROR" ? "#E6A5A0" : "#ECE5DA";
+        return `<div style="border:1px solid ${borderCol};border-radius:12px;padding:12px;margin-bottom:8px;background:#fff">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <span class="badge ${badgeCls}">${esc(l.level)} · ${esc(l.source)}</span>
+            <span style="font-size:11px;color:var(--muted)">${formatTimestamp(l.ts)}</span>
+          </div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:4px">${esc(l.message)}</div>
+          ${l.endpoint ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">Endpoint: <code>${esc(l.endpoint)}</code></div>` : ""}
+          ${l.detail ? `<div style="background:#FAF7F2;border-radius:8px;padding:8px;font-family:monospace;font-size:11px;word-break:break-word;margin-bottom:4px">${esc(l.detail)}</div>` : ""}
+          ${l.hint ? `<div style="background:#FFF8EA;border:1px solid var(--gold);border-radius:8px;padding:7px 9px;font-size:12px;color:var(--dark)">💡 <strong>Diagnóstico:</strong> ${esc(l.hint)}</div>` : ""}
+        </div>`;
+      }).join("");
+    }
+
+    window.addEventListener("error", (evt) => {
+      if (evt?.message) {
+        recordSystemLog("ERROR", "Admin (Global)", evt.message, evt.filename ? `${evt.filename}:${evt.lineno || 0}` : "");
+      }
+    });
+    window.addEventListener("unhandledrejection", (evt) => {
+      if (evt?.reason) {
+        recordSystemLog("ERROR", "Admin (Promesa)", "Error asíncrono no capturado", evt.reason);
+      }
+    });
+
+    window.setFilter = function (filter) {
+      currentFilter = filter;
+      document.querySelectorAll("#filter-chips .chip").forEach((c) => {
+        c.classList.toggle("active", c.dataset.filter === filter);
+      });
+      renderDashboard();
+    };
+
+    function mapSupabaseOrderRow(o) {
+      return {
+        id: o.id,
+        orderNumber: o.order_number,
+        customerName: o.customer_name,
+        customerPhone: o.customer_phone,
+        desiredDate: o.desired_date,
+        additionalInstructions: o.additional_instructions,
+        preparationMode: o.preparation_mode,
+        fulfillmentType: o.fulfillment_type,
+        neighborhood: o.neighborhood,
+        streetAndNumber: o.street_and_number,
+        deliveryReference: o.delivery_reference,
+        pickupDate: o.pickup_date,
+        pickupTime: o.pickup_time,
+        items: Array.isArray(o.items) ? o.items : [],
+        totalAmountPyg: Number(o.total_amount_pyg || 0),
+        status: o.status || "PENDING_PAYMENT",
+        whatsappUnlocked: Boolean(o.whatsapp_unlocked),
+        createdAtMs: Number(o.created_at_ms || Date.now()),
+        updatedAtMs: Number(o.updated_at_ms || Date.now())
+      };
+    }
+
+    function readLocalFallbackOrders() {
+      try {
+        const raw = localStorage.getItem(LOCAL_ORDERS_KEY);
+        const list = raw ? JSON.parse(raw) : [];
+        return (Array.isArray(list) ? list : []).map((o) => ({
+          id: o.orderId,
+          orderNumber: o.orderNumber,
+          customerName: o.customerName,
+          customerPhone: o.customerPhone,
+          desiredDate: o.desiredDate,
+          additionalInstructions: o.additionalInstructions,
+          preparationMode: o.preparationMode,
+          fulfillmentType: o.fulfillmentType,
+          neighborhood: o.neighborhood,
+          streetAndNumber: o.streetAndNumber,
+          deliveryReference: o.deliveryReference,
+          pickupTime: o.pickupTime,
+          items: o.items || [],
+          totalAmountPyg: Number(o.totalAmountPyg || 0),
+          status: o.status || "PENDING_PAYMENT",
+          whatsappUnlocked: Boolean(o.whatsappUnlocked),
+          createdAtMs: Date.parse(o.createdAtIso || "") || Date.now(),
+          isLocalOnly: true
+        }));
+      } catch {
+        return [];
+      }
+    }
+
+    window.refreshNow = async function () {
+      const banner = document.getElementById("db-status-banner");
+      if (!supabaseCfg) {
+        allOrders = readLocalFallbackOrders();
+        inventoryRows = [
+          { id: "pepperoni", product_name: "Pepperoni", stock: 20, low_stock_threshold: 5 },
+          { id: "mozzarella", product_name: "Mozzarella", stock: 20, low_stock_threshold: 5 },
+          { id: "four_cheeses", product_name: "Cuatro quesos", stock: 20, low_stock_threshold: 5 },
+          { id: "chicken_catupiry", product_name: "Pollo Catupiri", stock: 20, low_stock_threshold: 5 }
+        ];
+        banner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span><strong>🟡 Modo local (este navegador):</strong> Para recibir pedidos online desde cualquier celular o PC en vivo, tocá <strong>🔌 Base Online</strong> arriba y conectá tu URL y Key de Supabase (tras correr <code>supabase_schema.sql</code>).</span>
+          <button class="btn btn-outline" style="min-height:34px;padding:5px 10px;font-size:12px;background:#fff" onclick="toggleVapidSetupCard(true)">🔔 Push VAPID</button>
+        </div>`;
+        renderDashboard();
+        return;
+      }
+
+      try {
+        const [ordersData, invData, productsData] = await Promise.all([
+          sbFetch("orders?select=*&order=created_at_ms.desc&limit=100"),
+          sbFetch("inventory?select=*"),
+          sbFetch("products?select=id,name,active&order=sort_order.asc")
+        ]);
+        lastRefreshErrorSig = "";
+        allOrders = (ordersData || []).map(mapSupabaseOrderRow);
+        inventoryRows = invData || [];
+        if (Array.isArray(productsData) && productsData.length === 0) {
+          recordSystemLog("WARN", "Admin (Catálogo)", "La tabla products en Supabase tiene 0 productos cargados.", "", "products");
+        }
+        banner.style.background = "var(--wa-soft)";
+        banner.style.borderColor = "#9FD8B4";
+        const hasVapid = Boolean(supabaseCfg.vapidPublicKey || getVapidDraft()?.publicKey);
+        banner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span><strong>🟢 Base de Datos Online Conectada (Supabase):</strong> Mostrando ${allOrders.length} pedidos globales en vivo (actualiza cada 5 s).</span>
+          <button class="btn btn-outline" style="min-height:34px;padding:5px 10px;font-size:12px;background:#fff" onclick="toggleVapidSetupCard(true)">
+            ${hasVapid ? "🔔 Ver Push VAPID" : "🔔 Configurar Push VAPID"}
+          </button>
+        </div>`;
+        renderDashboard();
+      } catch (err) {
+        const errMsg = String(err?.message || err);
+        if (errMsg !== lastRefreshErrorSig) {
+          lastRefreshErrorSig = errMsg;
+          recordSystemLog("ERROR", "Admin (Sincronización)", "Error al sincronizar pedidos, stock o productos con Supabase", err, "orders / inventory / products");
+        }
+        banner.style.background = "var(--danger-soft)";
+        banner.style.borderColor = "#E6A5A0";
+        banner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span><strong>⚠️ Error conectando a Supabase:</strong> ${esc(errMsg)}</span>
+          <button class="btn btn-outline" style="min-height:34px;padding:5px 10px;font-size:12px;background:#fff" onclick="focusSystemLogsCard()">🩺 Ver Logs</button>
+        </div>`;
+      }
     };
 
     window.confirmPayment = async function (orderId) {
-      if (!fb || !currentUser || busyOrderId) return;
+      if (busyOrderId) return;
       const order = allOrders.find((o) => o.id === orderId);
       if (!order) return;
-      if (!confirm(`¿Confirmar transferencia Itaú de ${fmt(order.totalAmountPyg)} para ${order.orderNumber}?\n\nEsto descontará el stock y actualizará el historial del cliente en tiempo real.`)) {
+      if (!confirm(`¿Confirmar transferencia Itaú de ${fmt(order.totalAmountPyg)} para ${order.orderNumber}?\n\nEsto descontará el stock y desbloqueará WhatsApp en el historial del cliente.`)) {
         return;
       }
 
       busyOrderId = orderId;
       renderDashboard();
       try {
-        const { db, doc, runTransaction, serverTimestamp } = fb;
-        await runTransaction(db, async (tx) => {
-          const orderRef = doc(db, "orders", orderId);
-          const statusRef = doc(db, "order_status", orderId);
-          const orderSnap = await tx.get(orderRef);
-          if (!orderSnap.exists()) throw new Error("El pedido no existe.");
-          const data = orderSnap.data();
-          if (data.status !== "PENDING_PAYMENT") {
-            throw new Error(`El pedido ya está en estado ${data.status}.`);
-          }
+        const nowMs = Date.now();
+        if (!supabaseCfg) {
+          // Update localStorage order for local preview
+          const raw = JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
+          const next = raw.map((o) => o.orderId === orderId ? { ...o, status: "PAYMENT_CONFIRMED", whatsappUnlocked: true, stageStartedAtIso: new Date(nowMs).toISOString() } : o);
+          localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(next));
+          await refreshNow();
+          showToast(`✅ Pago confirmado localmente para ${order.orderNumber}.`);
+          return;
+        }
 
-          const invUpdates = [];
-          for (const item of (data.items || [])) {
-            const prodId = item.productId;
-            const prodName = item.productName || prodId;
-            const qty = Number(item.quantity || 0);
-            if (!prodId || qty <= 0) continue;
-            const invRef = doc(db, "inventory", prodId);
-            const invSnap = await tx.get(invRef);
-            const currentStock = invSnap.exists() ? Number(invSnap.data().stock ?? 0) : 20;
-            const nextStock = currentStock - qty;
-            if (nextStock < 0) {
-              throw new Error(`Stock insuficiente para ${prodName} (disponible: ${currentStock}, requerido: ${qty}).`);
-            }
-            invUpdates.push({ invRef, prodName, nextStock });
-          }
+        const freshArr = await sbFetch(`orders?id=eq.${encodeURIComponent(orderId)}&select=*&limit=1`);
+        if (!freshArr || freshArr.length === 0) throw new Error("El pedido no existe.");
+        const data = freshArr[0];
+        if (data.status !== "PENDING_PAYMENT") {
+          throw new Error(`El pedido ya está en estado ${data.status}.`);
+        }
 
-          for (const u of invUpdates) {
-            tx.set(u.invRef, {
-              productName: u.prodName,
-              stock: u.nextStock,
-              lowStockThreshold: 5,
-              updatedBy: currentUser.uid,
-              updatedAt: serverTimestamp()
-            });
-          }
+        // Check & update inventory safely
+        const invArr = await sbFetch("inventory?select=*");
+        const invMap = {};
+        (invArr || []).forEach((r) => { invMap[r.id] = r; });
 
-          tx.update(orderRef, {
+        for (const item of (data.items || [])) {
+          const prodId = item.productId;
+          const prodName = item.productName || prodId;
+          const qty = Number(item.quantity || 0);
+          if (!prodId || qty <= 0) continue;
+          const currentStock = invMap[prodId] ? Number(invMap[prodId].stock ?? 0) : 20;
+          const nextStock = currentStock - qty;
+          if (nextStock < 0) {
+            throw new Error(`Stock insuficiente para ${prodName} (disponible: ${currentStock}, requerido: ${qty}).`);
+          }
+          await sbFetch("inventory?on_conflict=id", {
+            method: "POST",
+            headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+            body: JSON.stringify({
+              id: prodId,
+              product_name: prodName,
+              stock: nextStock,
+              low_stock_threshold: invMap[prodId]?.low_stock_threshold ?? 5,
+              updated_by: "admin_web",
+              updated_at_ms: nowMs
+            })
+          });
+        }
+
+        await sbFetch(`orders?id=eq.${encodeURIComponent(orderId)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
             status: "PAYMENT_CONFIRMED",
-            whatsappUnlocked: true,
-            paymentConfirmedAt: serverTimestamp(),
-            confirmedByAdminId: currentUser.uid,
-            confirmedByAdminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
-            updatedAt: serverTimestamp()
-          });
-
-          tx.update(statusRef, {
-            status: "PAYMENT_CONFIRMED",
-            whatsappUnlocked: true,
-            updatedAt: serverTimestamp()
-          });
-
-          const logRef = doc(db, "payment_audit_logs", randomId("log_"));
-          tx.set(logRef, {
-            orderId,
-            orderNumber: data.orderNumber || orderId,
-            adminId: currentUser.uid,
-            adminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
-            action: "CONFIRM_PAYMENT",
-            previousStatus: "PENDING_PAYMENT",
-            newStatus: "PAYMENT_CONFIRMED",
-            amountPyg: Number(data.totalAmountPyg || 0),
-            note: "Transferencia Itaú verificada desde Admin Web",
-            createdAt: serverTimestamp()
-          });
+            whatsapp_unlocked: true,
+            payment_confirmed_at_ms: nowMs,
+            confirmed_by_admin_id: "admin_web",
+            confirmed_by_admin_email: BOOTSTRAP_ADMIN_EMAIL,
+            updated_at_ms: nowMs
+          })
         });
 
+        await sbFetch(`order_status?id=eq.${encodeURIComponent(orderId)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            status: "PAYMENT_CONFIRMED",
+            whatsapp_unlocked: true,
+            updated_at_ms: nowMs
+          })
+        });
+
+        await sbFetch("payment_audit_logs", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            id: randomId("log_"),
+            order_id: orderId,
+            order_number: data.order_number || orderId,
+            admin_id: "admin_web",
+            admin_email: BOOTSTRAP_ADMIN_EMAIL,
+            action: "CONFIRM_PAYMENT",
+            previous_status: "PENDING_PAYMENT",
+            new_status: "PAYMENT_CONFIRMED",
+            amount_pyg: Number(data.total_amount_pyg || 0),
+            note: "Transferencia Itaú verificada desde Admin Web",
+            created_at_ms: nowMs
+          })
+        });
+
+        await refreshNow();
         showToast(`✅ Pago confirmado para ${order.orderNumber}. El cliente ya lo ve en vivo.`);
       } catch (err) {
+        recordSystemLog("ERROR", "Admin (Confirmar Pago)", `Fallo al confirmar pago de ${order.orderNumber}`, err, `orders?id=eq.${orderId}`);
         alert("No se pudo confirmar el pago: " + (err?.message || err));
       } finally {
         busyOrderId = null;
@@ -673,38 +1403,53 @@
     };
 
     window.advanceStatus = async function (orderId, nextStatus) {
-      if (!fb || !currentUser || busyOrderId) return;
+      if (busyOrderId) return;
       const order = allOrders.find((o) => o.id === orderId);
       if (!order) return;
       busyOrderId = orderId;
       renderDashboard();
       try {
-        const { db, doc, writeBatch, serverTimestamp } = fb;
-        const batch = writeBatch(db);
-        batch.update(doc(db, "orders", orderId), {
-          status: nextStatus,
-          updatedAt: serverTimestamp()
+        const nowMs = Date.now();
+        if (!supabaseCfg) {
+          const raw = JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
+          const next = raw.map((o) => o.orderId === orderId ? { ...o, status: nextStatus, whatsappUnlocked: true, stageStartedAtIso: new Date(nowMs).toISOString() } : o);
+          localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(next));
+          await refreshNow();
+          showToast(`Pedido ${order.orderNumber} actualizado a ${STATUS_LABELS[nextStatus]?.text || nextStatus}.`);
+          return;
+        }
+
+        await sbFetch(`orders?id=eq.${encodeURIComponent(orderId)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ status: nextStatus, updated_at_ms: nowMs })
         });
-        batch.update(doc(db, "order_status", orderId), {
-          status: nextStatus,
-          whatsappUnlocked: true,
-          updatedAt: serverTimestamp()
+        await sbFetch(`order_status?id=eq.${encodeURIComponent(orderId)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ status: nextStatus, whatsapp_unlocked: true, updated_at_ms: nowMs })
         });
-        batch.set(doc(db, "payment_audit_logs", randomId("log_")), {
-          orderId,
-          orderNumber: order.orderNumber || orderId,
-          adminId: currentUser.uid,
-          adminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
-          action: "STATUS_CHANGE",
-          previousStatus: order.status,
-          newStatus: nextStatus,
-          amountPyg: Number(order.totalAmountPyg || 0),
-          note: `Estado cambiado a ${STATUS_LABELS[nextStatus]?.text || nextStatus}`,
-          createdAt: serverTimestamp()
+        await sbFetch("payment_audit_logs", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            id: randomId("log_"),
+            order_id: orderId,
+            order_number: order.orderNumber || orderId,
+            admin_id: "admin_web",
+            admin_email: BOOTSTRAP_ADMIN_EMAIL,
+            action: "STATUS_CHANGE",
+            previous_status: order.status,
+            new_status: nextStatus,
+            amount_pyg: Number(order.totalAmountPyg || 0),
+            note: `Estado cambiado a ${STATUS_LABELS[nextStatus]?.text || nextStatus}`,
+            created_at_ms: nowMs
+          })
         });
-        await batch.commit();
+        await refreshNow();
         showToast(`Pedido ${order.orderNumber} actualizado a ${STATUS_LABELS[nextStatus]?.text || nextStatus}.`);
       } catch (err) {
+        recordSystemLog("ERROR", "Admin (Estado Pedido)", `Fallo al avanzar estado de ${order.orderNumber}`, err, `orders?id=eq.${orderId}`);
         alert("No se pudo actualizar el estado: " + (err?.message || err));
       } finally {
         busyOrderId = null;
@@ -713,7 +1458,7 @@
     };
 
     window.cancelOrder = async function (orderId) {
-      if (!fb || !currentUser || busyOrderId) return;
+      if (busyOrderId) return;
       const order = allOrders.find((o) => o.id === orderId);
       if (!order) return;
       const reason = prompt(`Motivo de cancelación para ${order.orderNumber}:`, "No se verificó el depósito");
@@ -723,34 +1468,56 @@
       busyOrderId = orderId;
       renderDashboard();
       try {
-        const { db, doc, writeBatch, serverTimestamp } = fb;
-        const batch = writeBatch(db);
-        batch.update(doc(db, "orders", orderId), {
-          status: "CANCELLED",
-          whatsappUnlocked: false,
-          cancellationReason: cleanReason,
-          updatedAt: serverTimestamp()
+        const nowMs = Date.now();
+        if (!supabaseCfg) {
+          const raw = JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
+          const next = raw.map((o) => o.orderId === orderId ? { ...o, status: "CANCELLED", whatsappUnlocked: false } : o);
+          localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(next));
+          await refreshNow();
+          showToast(`Pedido ${order.orderNumber} cancelado.`);
+          return;
+        }
+
+        await sbFetch(`orders?id=eq.${encodeURIComponent(orderId)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            status: "CANCELLED",
+            whatsapp_unlocked: false,
+            cancellation_reason: cleanReason,
+            updated_at_ms: nowMs
+          })
         });
-        batch.update(doc(db, "order_status", orderId), {
-          status: "CANCELLED",
-          whatsappUnlocked: false,
-          updatedAt: serverTimestamp()
+        await sbFetch(`order_status?id=eq.${encodeURIComponent(orderId)}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            status: "CANCELLED",
+            whatsapp_unlocked: false,
+            updated_at_ms: nowMs
+          })
         });
-        batch.set(doc(db, "payment_audit_logs", randomId("log_")), {
-          orderId,
-          orderNumber: order.orderNumber || orderId,
-          adminId: currentUser.uid,
-          adminEmail: currentUser.email || BOOTSTRAP_ADMIN_EMAIL,
-          action: "CANCEL_ORDER",
-          previousStatus: order.status,
-          newStatus: "CANCELLED",
-          amountPyg: Number(order.totalAmountPyg || 0),
-          note: cleanReason,
-          createdAt: serverTimestamp()
+        await sbFetch("payment_audit_logs", {
+          method: "POST",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({
+            id: randomId("log_"),
+            order_id: orderId,
+            order_number: order.orderNumber || orderId,
+            admin_id: "admin_web",
+            admin_email: BOOTSTRAP_ADMIN_EMAIL,
+            action: "CANCEL_ORDER",
+            previous_status: order.status,
+            new_status: "CANCELLED",
+            amount_pyg: Number(order.totalAmountPyg || 0),
+            note: cleanReason,
+            created_at_ms: nowMs
+          })
         });
-        await batch.commit();
+        await refreshNow();
         showToast(`Pedido ${order.orderNumber} cancelado.`);
       } catch (err) {
+        recordSystemLog("ERROR", "Admin (Cancelar Pedido)", `Fallo al cancelar ${order.orderNumber}`, err, `orders?id=eq.${orderId}`);
         alert("No se pudo cancelar: " + (err?.message || err));
       } finally {
         busyOrderId = null;
@@ -779,9 +1546,9 @@
       `;
 
       document.getElementById("stock-grid").innerHTML = inventoryRows.map((inv) => {
-        const low = Number(inv.stock) <= Number(inv.lowStockThreshold || 5);
+        const low = Number(inv.stock) <= Number(inv.low_stock_threshold ?? 5);
         return `<div class="stock-pill">
-          <strong>${esc(inv.productName || inv.id)}</strong>
+          <strong>${esc(inv.product_name || inv.id)}</strong>
           <span style="font-weight:800;color:${low ? "var(--danger)" : "var(--wa)"}">${Number(inv.stock ?? 0)} u.</span>
         </div>`;
       }).join("");
@@ -828,7 +1595,7 @@
             <div>
               <strong style="font-size:17px">${esc(order.orderNumber)}</strong>
               <div style="font-size:13px;color:var(--muted)">
-                ${esc(order.customerName)} · ${esc(order.customerPhone)} · ${formatTimestamp(order.createdAt)}
+                ${esc(order.customerName)} · ${esc(order.customerPhone)} · ${formatTimestamp(order.createdAtMs)}
               </div>
             </div>
             <span class="badge ${st.cls}">${st.text}</span>
@@ -870,178 +1637,30 @@
       }).join("");
     }
 
-    async function verifyAdminAccess(user) {
-      if (user.emailVerified && user.email && user.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL) {
-        return true;
+    function enterDashboard() {
+      supabaseCfg = getEffectiveDbConfig();
+      updateTopbarUi(true);
+      showSection("dashboard-view");
+      renderSystemLogs();
+      if (!supabaseCfg) {
+        document.getElementById("db-config-card").style.display = "block";
       }
-      try {
-        const snap = await fb.getDoc(fb.doc(fb.db, "administrators", user.uid));
-        return snap.exists() && snap.data().active === true;
-      } catch {
-        return false;
-      }
-    }
-
-    function startLiveAdminStreams() {
-      const { db, collection, query, orderBy, limit, onSnapshot } = fb;
-      if (unsubOrders) unsubOrders();
-      if (unsubInventory) unsubInventory();
-
-      unsubOrders = onSnapshot(
-        query(collection(db, "orders"), orderBy("createdAt", "desc"), limit(100)),
-        (snap) => {
-          allOrders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          renderDashboard();
-        },
-        (err) => {
-          showToast("Error leyendo pedidos: " + (err?.message || "Permisos"));
+      refreshNow();
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          refreshNow();
         }
-      );
-
-      unsubInventory = onSnapshot(
-        collection(db, "inventory"),
-        (snap) => {
-          inventoryRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          renderDashboard();
-        },
-        () => {}
-      );
+      }, 5000);
     }
 
-    const CONFIG_OVERRIDE_KEY = "pizza_club_firebase_config_override_v1";
-
-    function isValidFirebaseConfig(cfg) {
-      if (!cfg || typeof cfg !== "object") return false;
-      const apiKey = String(cfg.apiKey || "").trim();
-      const projectId = String(cfg.projectId || "").trim();
-      const appId = String(cfg.appId || "").trim();
-      const placeholderRe = /YOUR_|REEMPLAZAR|PLACEHOLDER|REPLACE_|PEG[AÁ]|TU_/i;
-      if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(apiKey)) return false;
-      if (!projectId || placeholderRe.test(projectId)) return false;
-      if (appId && placeholderRe.test(appId)) return false;
-      return true;
+    supabaseCfg = getEffectiveDbConfig();
+    if (sessionStorage.getItem(ADMIN_SESSION_KEY) === "true") {
+      enterDashboard();
+    } else {
+      updateTopbarUi(false);
+      showSection("login-view");
     }
-
-    function getEffectiveFirebaseConfig() {
-      try {
-        const raw = localStorage.getItem(CONFIG_OVERRIDE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (isValidFirebaseConfig(parsed)) return parsed;
-        }
-      } catch {
-        // Ignore invalid override
-      }
-      return window.PIZZA_CLUB_FIREBASE_CONFIG;
-    }
-
-    function parsePastedFirebaseSnippet(rawText) {
-      const text = String(rawText || "").trim();
-      const grab = (key) => {
-        const m = text.match(new RegExp(`["']?${key}["']?\\s*:\\s*["']([^"']+)["']`));
-        return m ? m[1].trim() : "";
-      };
-      const cfg = {
-        apiKey: grab("apiKey"),
-        authDomain: grab("authDomain") || "gen-lang-client-0684931110.firebaseapp.com",
-        projectId: grab("projectId") || "gen-lang-client-0684931110",
-        storageBucket: grab("storageBucket") || "gen-lang-client-0684931110.firebasestorage.app",
-        messagingSenderId: grab("messagingSenderId") || "573144896313",
-        appId: grab("appId")
-      };
-      return cfg;
-    }
-
-    window.showConfigSetupView = function () {
-      showSection("config-missing-view");
-    };
-
-    window.savePastedFirebaseConfig = function () {
-      const input = document.getElementById("firebase-paste-input");
-      const errEl = document.getElementById("firebase-paste-error");
-      errEl.style.display = "none";
-      const parsed = parsePastedFirebaseSnippet(input?.value || "");
-      if (!isValidFirebaseConfig(parsed)) {
-        errEl.textContent = "No encontramos una apiKey válida (debe empezar con 'AIza...') en el texto pegado. Copiá el bloque completo firebaseConfig de Firebase Console.";
-        errEl.style.display = "block";
-        return;
-      }
-      localStorage.setItem(CONFIG_OVERRIDE_KEY, JSON.stringify(parsed));
-      location.reload();
-    };
-
-    window.clearSavedFirebaseConfig = function () {
-      localStorage.removeItem(CONFIG_OVERRIDE_KEY);
-      location.reload();
-    };
-
-    async function boot() {
-      const domainHint = document.getElementById("current-domain-hint");
-      if (domainHint && location.hostname) domainHint.textContent = location.hostname;
-      const cfg = getEffectiveFirebaseConfig();
-      if (!isValidFirebaseConfig(cfg)) {
-        showSection("config-missing-view");
-        return;
-      }
-
-      const [
-        { initializeApp },
-        { getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged },
-        { getFirestore, collection, doc, getDoc, query, orderBy, limit, onSnapshot, runTransaction, writeBatch, serverTimestamp }
-      ] = await Promise.all([
-        import("https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js"),
-        import("https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js"),
-        import("https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js")
-      ]);
-
-      const app = initializeApp(cfg);
-      const auth = getAuth(app);
-      const provider = new GoogleAuthProvider();
-      const appleProvider = new OAuthProvider("apple.com");
-      appleProvider.addScope("email");
-      appleProvider.addScope("name");
-      const db = getFirestore(app, DATABASE_ID);
-      fb = { auth, provider, appleProvider, signInWithPopup, signInWithRedirect, signOut, db, collection, doc, getDoc, query, orderBy, limit, onSnapshot, runTransaction, writeBatch, serverTimestamp };
-
-      window.evaluateAuthGate = async function (user) {
-        currentUser = user;
-        const signOutBtn = document.getElementById("signout-btn");
-        const userLabel = document.getElementById("admin-user-label");
-        updateFaceIdUiState(user);
-
-        if (!user) {
-          signOutBtn.style.display = "none";
-          userLabel.textContent = "Acceso exclusivo del propietario";
-          showSection("login-view");
-          return;
-        }
-
-        signOutBtn.style.display = "inline-flex";
-        userLabel.textContent = user.email || user.uid;
-
-        const isAdmin = await verifyAdminAccess(user);
-        if (!isAdmin) {
-          document.getElementById("unauthorized-msg").textContent = `La cuenta ${user.email || user.uid} no tiene permisos de administrador.`;
-          showSection("unauthorized-view");
-          return;
-        }
-
-        const enrolled = getEnrolledFaceId();
-        if (enrolled && !faceIdUnlockedThisTab) {
-          showSection("login-view");
-          return;
-        }
-
-        showSection("dashboard-view");
-        startLiveAdminStreams();
-      };
-
-      onAuthStateChanged(auth, (user) => {
-        window.evaluateAuthGate(user);
-      });
-    }
-
-    boot();
   </script>
 </body>
 </html>

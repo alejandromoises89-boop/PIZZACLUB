@@ -280,11 +280,15 @@ fun CheckoutScreen(
 
                     OutlinedTextField(
                         value = form.additionalInstructions,
-                        onValueChange = { v -> onUpdateForm { it.copy(additionalInstructions = v) } },
-                        label = { Text("Instrucciones adicionales (opcional)") },
-                        placeholder = { Text("Ej: Sin orégano, tocar timbre") },
-                        minLines = 2,
-                        modifier = Modifier.fillMaxWidth()
+                        onValueChange = { v -> onUpdateForm { it.copy(additionalInstructions = v.take(400)) } },
+                        label = { Text("Instrucciones de entrega o alérgenos (opcional)") },
+                        placeholder = { Text("Ej: Dejar en portería, no tocar timbre, alergia a lácteos/frutos secos...") },
+                        supportingText = { Text("${form.additionalInstructions.length} / 400 caracteres · Se envía a cocina y reparto") },
+                        minLines = 3,
+                        maxLines = 5,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("checkout_instructions_input")
                     )
                 }
             }

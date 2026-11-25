@@ -1,11 +1,17 @@
 package com.example.ui.customer
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +37,9 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
@@ -40,6 +49,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -51,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
@@ -71,6 +82,8 @@ import androidx.compose.ui.unit.dp
 import com.example.data.BusinessSettingsModel
 import com.example.data.FulfillmentType
 import com.example.data.LocalSavedOrder
+import com.example.data.LoyaltyProgramCalculator
+import com.example.data.LoyaltyProgramState
 import com.example.data.OrderStatus
 import com.example.data.OrderStatusTrackerModel
 import com.example.data.buildWhatsAppOrderMessage
@@ -100,6 +113,8 @@ fun OrderTrackerScreen(
     settings: BusinessSettingsModel,
     isRefreshingHistory: Boolean,
     pizzaClubPoints: Int = 0,
+    loyaltyState: LoyaltyProgramState = LoyaltyProgramState(balance = pizzaClubPoints, totalEarned = pizzaClubPoints),
+    onRedeemLoyaltyReward: () -> Unit = {},
     onSelectOrder: (String) -> Unit,
     onRefreshHistory: () -> Unit,
     onGoToMenu: () -> Unit,
@@ -108,6 +123,32 @@ fun OrderTrackerScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val requiresRuntimeNotifPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    var hasNotificationPermission by remember {
+        mutableStateOf(
+            !requiresRuntimeNotifPermission ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasNotificationPermission = granted
+    }
+
+    LaunchedEffect(savedOrders.isNotEmpty(), hasNotificationPermission) {
+        if (requiresRuntimeNotifPermission && savedOrders.isNotEmpty() && !hasNotificationPermission) {
+            val prefs = context.getSharedPreferences("pizza_club_alert_prefs", Context.MODE_PRIVATE)
+            val alreadyPrompted = prefs.getBoolean("prompted_post_notifications", false)
+            if (!alreadyPrompted) {
+                prefs.edit().putBoolean("prompted_post_notifications", true).apply()
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
 
     if (savedOrders.isEmpty()) {
         Box(
@@ -170,11 +211,29 @@ fun OrderTrackerScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Sección Pizza Club Points (1 punto por cada pizza comprada)
+        // Estado de alertas sonoras y notificaciones locales
+        item {
+            OrderAlertsStatusBanner(
+                notificationsEnabled = hasNotificationPermission,
+                onEnableNotifications = {
+                    if (requiresRuntimeNotifPermission) {
+                        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            )
+        }
+
+        // Sección Pizza Club Points (1 punto por cada pizza comprada + cupón único a los 10 pts)
         item {
             PizzaClubPointsCard(
-                points = pizzaClubPoints,
-                savedOrders = savedOrders
+                loyaltyState = loyaltyState,
+                savedOrders = savedOrders,
+                onCopyCoupon = { code ->
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Cupón Pizza Club", code))
+                    Toast.makeText(context, "Cupón copiado: $code", Toast.LENGTH_SHORT).show()
+                },
+                onRedeemReward = onRedeemLoyaltyReward
             )
         }
 
@@ -759,14 +818,16 @@ private fun OrderHistorySection(
 
 @Composable
 private fun PizzaClubPointsCard(
-    points: Int,
-    savedOrders: List<LocalSavedOrder>
+    loyaltyState: LoyaltyProgramState,
+    savedOrders: List<LocalSavedOrder>,
+    onCopyCoupon: (String) -> Unit,
+    onRedeemReward: () -> Unit
 ) {
-    val goal = 10
-    val progress = ((points % goal).toFloat() / goal.toFloat()).let {
-        if (points > 0 && points % goal == 0) 1f else it
-    }
-    val remaining = if (points > 0 && points % goal == 0) 0 else goal - (points % goal)
+    val goal = LoyaltyProgramCalculator.LOYALTY_GOAL
+    val points = loyaltyState.balance
+    val hasUnlockedReward = points >= goal && !loyaltyState.activeCouponCode.isNullOrBlank()
+    val progress = if (hasUnlockedReward) 1f else (points.coerceIn(0, goal).toFloat() / goal.toFloat())
+    val remaining = if (hasUnlockedReward) 0 else (goal - points).coerceAtLeast(0)
 
     Card(
         shape = MaterialTheme.shapes.large,
@@ -843,14 +904,102 @@ private fun PizzaClubPointsCard(
             )
 
             Text(
-                text = if (remaining == 0 && points > 0) {
-                    "¡Meta de $goal puntos alcanzada! Mostrá tu pantalla por WhatsApp para reclamar tu premio VIP."
+                text = if (hasUnlockedReward) {
+                    "¡Alcanzaste $goal puntos! Generamos tu cupón VIP único para canjear tu premio."
                 } else {
                     "Te faltan $remaining ${if (remaining == 1) "pizza" else "pizzas"} para desbloquear tu próximo premio VIP ($goal pts)."
                 },
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                 color = OnCheeseContainer
             )
+
+            if (hasUnlockedReward) {
+                val couponCode = loyaltyState.activeCouponCode!!
+                Surface(
+                    color = EspressoDark,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("loyalty_coupon_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "CUPÓN ÚNICO DE FIDELIDAD",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(alpha = 0.72f)
+                                )
+                                Text(
+                                    text = couponCode,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                                    color = CheeseSecondary,
+                                    modifier = Modifier.testTag("loyalty_coupon_code")
+                                )
+                            }
+                            IconButton(
+                                onClick = { onCopyCoupon(couponCode) },
+                                modifier = Modifier.testTag("copy_loyalty_coupon_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ContentCopy,
+                                    contentDescription = "Copiar cupón",
+                                    tint = CheeseSecondary
+                                )
+                            }
+                        }
+                        Button(
+                            onClick = onRedeemReward,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("redeem_loyalty_reward_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = WhatsAppGreen,
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Icon(Icons.Rounded.CardGiftcard, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Canjear Premio")
+                        }
+                    }
+                }
+            }
+
+            if (loyaltyState.redeemedCoupons.isNotEmpty()) {
+                HorizontalDivider(color = CheeseSecondary.copy(alpha = 0.6f))
+                Text(
+                    text = "Cupones canjeados",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = OnCheeseContainer
+                )
+                loyaltyState.redeemedCoupons.take(2).forEach { redeemed ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🎟️ ${redeemed.code}",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = OnCheeseContainer
+                        )
+                        Text(
+                            text = "-${redeemed.pointsCost} pts · Canjeado",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = WhatsAppGreen
+                        )
+                    }
+                }
+            }
 
             val recentEarned = savedOrders
                 .filter { it.status != OrderStatus.CANCELLED.rawValue }
@@ -880,3 +1029,69 @@ private fun PizzaClubPointsCard(
     }
 }
 
+@Composable
+private fun OrderAlertsStatusBanner(
+    notificationsEnabled: Boolean,
+    onEnableNotifications: () -> Unit
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = if (notificationsEnabled) WhatsAppGreenContainer else PendingAmberContainer,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (notificationsEnabled) WhatsAppGreen.copy(alpha = 0.45f) else PendingAmber.copy(alpha = 0.45f)
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("order_alerts_banner")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = if (notificationsEnabled) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsOff,
+                contentDescription = null,
+                tint = if (notificationsEnabled) WhatsAppGreen else PendingAmber,
+                modifier = Modifier.size(20.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (notificationsEnabled) {
+                        "Alertas y sonido activos"
+                    } else {
+                        "Activá las notificaciones locales"
+                    },
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                    color = if (notificationsEnabled) WhatsAppGreen else PendingAmber
+                )
+                Text(
+                    text = if (notificationsEnabled) {
+                        "Te avisamos con sonido cuando confirmen tu pago o tu pedido salga en camino."
+                    } else {
+                        "Enterate al instante cuando confirmen tu pago o salga tu delivery, incluso sin mirar la pantalla."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            if (!notificationsEnabled) {
+                Button(
+                    onClick = onEnableNotifications,
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("enable_order_notifications_button"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PendingAmber,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("Activar")
+                }
+            }
+        }
+    }
+}

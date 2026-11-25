@@ -1,9 +1,18 @@
 package com.example
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
+import java.net.URLEncoder
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -51,7 +60,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.data.DefaultCatalogDefaults
 import com.example.data.LocalOrderStore
 import com.example.data.PizzaClubRepository
-import com.example.data.configureAppCheck
+import com.example.notifications.OrderAlertNotifier
 import com.example.ui.admin.AdminAuthGate
 import com.example.ui.customer.CheckoutScreen
 import com.example.ui.customer.CustomerCatalogScreen
@@ -60,7 +69,6 @@ import com.example.ui.customer.SocialAndTreasureBottomSheet
 import com.example.ui.theme.PizzaClubTheme
 import com.example.viewmodel.CatalogUiState
 import com.example.viewmodel.CustomerViewModel
-import com.google.firebase.firestore.FirebaseFirestore
 
 const val ROUTE_CATALOG = "catalog"
 const val ROUTE_CHECKOUT = "checkout"
@@ -75,29 +83,53 @@ private data class TopDestination(
 )
 
 class MainActivity : FragmentActivity() {
+    private var pendingNotificationOrderId by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        configureAppCheck(this, intent)
         enableEdgeToEdge()
+        pendingNotificationOrderId = extractNotificationOrderTarget(intent)
         setContent {
             PizzaClubTheme {
-                PizzaClubApp()
+                PizzaClubApp(
+                    notificationOrderId = pendingNotificationOrderId,
+                    onConsumedNotificationOrder = { pendingNotificationOrderId = null }
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingNotificationOrderId = extractNotificationOrderTarget(intent)
+    }
+
+    private fun extractNotificationOrderTarget(intent: Intent?): String? {
+        if (intent == null) return null
+        val openOrders = intent.getBooleanExtra(OrderAlertNotifier.EXTRA_OPEN_ORDERS_TAB, false)
+        val orderId = intent.getStringExtra(OrderAlertNotifier.EXTRA_ORDER_ID)
+        return when {
+            !orderId.isNullOrBlank() -> orderId
+            openOrders -> ""
+            else -> null
         }
     }
 }
 
 @Composable
-fun PizzaClubApp() {
+fun PizzaClubApp(
+    notificationOrderId: String? = null,
+    onConsumedNotificationOrder: () -> Unit = {}
+) {
     val customerViewModel: CustomerViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
                 val app = checkNotNull(this[APPLICATION_KEY])
-                val dbId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(dbId)
                 CustomerViewModel(
-                    repository = PizzaClubRepository(db),
-                    localOrderStore = LocalOrderStore(app)
+                    repository = PizzaClubRepository(app),
+                    localOrderStore = LocalOrderStore(app),
+                    orderStatusNotifier = OrderAlertNotifier(app)
                 )
             }
         }
@@ -111,8 +143,9 @@ fun PizzaClubApp() {
     val selectedOrderId by customerViewModel.selectedOrderId.collectAsStateWithLifecycle()
     val liveTrackedStatus by customerViewModel.liveTrackedOrderStatus.collectAsStateWithLifecycle()
     val isRefreshingHistory by customerViewModel.isRefreshingHistory.collectAsStateWithLifecycle()
-    val aiRecommendationState by customerViewModel.aiRecommendationState.collectAsStateWithLifecycle()
     val pizzaClubPoints by customerViewModel.pizzaClubPoints.collectAsStateWithLifecycle()
+    val loyaltyState by customerViewModel.loyaltyState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -138,6 +171,16 @@ fun PizzaClubApp() {
             }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    LaunchedEffect(notificationOrderId) {
+        if (notificationOrderId != null) {
+            if (notificationOrderId.isNotBlank()) {
+                customerViewModel.selectOrder(notificationOrderId)
+            }
+            navigateTopLevel(ROUTE_ORDERS)
+            onConsumedNotificationOrder()
         }
     }
 
@@ -225,7 +268,6 @@ fun PizzaClubApp() {
                         CustomerCatalogScreen(
                             uiState = catalogState,
                             selectedPreparationMode = checkoutForm.preparationMode,
-                            aiRecommendationState = aiRecommendationState,
                             onSelectPreparationMode = { mode ->
                                 customerViewModel.updateCheckoutForm { it.copy(preparationMode = mode) }
                             },
@@ -237,9 +279,7 @@ fun PizzaClubApp() {
                             onOpenSocialQr = {
                                 sheetInitialTab = 1
                                 showSocialTreasureSheet = true
-                            },
-                            onRequestAiRecommendation = customerViewModel::requestPizzaRecommendation,
-                            onClearAiRecommendation = customerViewModel::clearPizzaRecommendation
+                            }
                         )
                     }
 
@@ -272,6 +312,27 @@ fun PizzaClubApp() {
                             settings = activeSettings,
                             isRefreshingHistory = isRefreshingHistory,
                             pizzaClubPoints = pizzaClubPoints,
+                            loyaltyState = loyaltyState,
+                            onRedeemLoyaltyReward = {
+                                customerViewModel.redeemLoyaltyReward { redeemed ->
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Cupón Pizza Club", redeemed.code))
+                                    Toast.makeText(
+                                        context,
+                                        "¡Premio canjeado! Cupón ${redeemed.code} copiado.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                    val msg = "🎁 *PIZZA CLUB POINTS — CANJE DE PREMIO VIP*\n" +
+                                        "Quiero canjear mi premio de ${redeemed.pointsCost} puntos.\n" +
+                                        "🎟️ Cupón único: *${redeemed.code}*"
+                                    val url = "https://wa.me/${activeSettings.whatsappNumber}?text=${URLEncoder.encode(msg, "UTF-8")}"
+                                    try {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    } catch (_: Exception) {
+                                        // Clipboard already holds the coupon code
+                                    }
+                                }
+                            },
                             onSelectOrder = customerViewModel::selectOrder,
                             onRefreshHistory = { customerViewModel.refreshAllSavedOrdersStatus() },
                             onGoToMenu = { navigateTopLevel(ROUTE_CATALOG) },

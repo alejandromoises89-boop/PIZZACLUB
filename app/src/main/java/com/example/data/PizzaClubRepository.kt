@@ -1,21 +1,15 @@
 package com.example.data
 
 import android.content.Context
-import com.example.R
-import com.google.firebase.Firebase
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.auth
-import com.google.firebase.firestore.DocumentSnapshot
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.FirebaseFirestoreException
-import com.google.firebase.firestore.Query
-import com.google.firebase.firestore.snapshots
+import android.util.Log
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.isActive
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -24,116 +18,207 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 
 class PizzaClubRepository(
-    private val db: FirebaseFirestore,
-    private val auth: FirebaseAuth = Firebase.auth
+    context: Context
 ) {
-    constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
-    )
+    private val appContext = context.applicationContext
+    private val db = PizzaClubDatabase.getInstance(appContext)
+    private val dao = db.pizzaClubDao()
+    val cloudClient = SupabaseRestClient(appContext)
+    val systemLogStore = SystemLogStore.getInstance(appContext)
 
-    private fun requireAdminIdentity(): Pair<String, String> {
-        val user = auth.currentUser
-            ?: throw IllegalStateException("Debés iniciar sesión con Google para operar como administrador.")
-        val email = user.email ?: ""
-        return user.uid to email
+    fun isCloudConnected(): Boolean = cloudClient.isConfigured()
+
+    fun observeSystemLogs() = systemLogStore.logs
+
+    fun clearSystemLogs() = systemLogStore.clear()
+
+    private suspend fun ensureLocalSeeded() {
+        val now = System.currentTimeMillis()
+        if (dao.getProductsCount().isEmpty()) {
+            dao.upsertProducts(
+                DefaultCatalogDefaults.defaultProducts.map {
+                    ProductEntity(
+                        id = it.id,
+                        name = it.name,
+                        description = it.description,
+                        pricePyg = it.pricePyg,
+                        active = it.active,
+                        imageKey = it.imageKey,
+                        sortOrder = it.sortOrder,
+                        createdAtMillis = now,
+                        updatedAtMillis = now
+                    )
+                }
+            )
+            dao.upsertInventory(
+                DefaultCatalogDefaults.defaultInventory.map {
+                    InventoryEntity(
+                        id = it.id,
+                        productName = it.productName,
+                        stock = it.stock,
+                        lowStockThreshold = it.lowStockThreshold,
+                        updatedBy = "system",
+                        updatedAtMillis = now
+                    )
+                }
+            )
+        }
+        if (dao.getSettingsOnce() == null) {
+            val s = DefaultCatalogDefaults.defaultSettings
+            dao.upsertSettings(
+                BusinessSettingsEntity(
+                    id = s.id,
+                    brandName = s.brandName,
+                    instagramHandle = s.instagramHandle,
+                    whatsappNumber = s.whatsappNumber,
+                    bankName = s.bankName,
+                    paymentAlias = s.paymentAlias,
+                    deliveryCity = s.deliveryCity,
+                    currency = s.currency,
+                    acceptingOrders = s.acceptingOrders,
+                    treasureCode = s.treasureCode,
+                    treasureReward = s.treasureReward,
+                    googleReviewUrl = s.googleReviewUrl,
+                    pwaInstallUrl = s.pwaInstallUrl,
+                    updatedAtMillis = now
+                )
+            )
+        }
     }
 
-    suspend fun verifyIsAdmin(): Boolean {
-        val user = auth.currentUser ?: return false
-        if (user.isEmailVerified && user.email.equals(DefaultCatalogDefaults.BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)) {
-            return true
-        }
-        return try {
-            val snap = db.collection("administrators").document(user.uid).get().await()
-            snap.exists() && snap.getBoolean("active") == true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.GET, "administrators/${user.uid}")
-            false
+    private fun periodicSyncTick(
+        intervalMs: Long = 5_000L,
+        source: String,
+        action: suspend () -> Unit
+    ): Flow<Unit> = flow {
+        ensureLocalSeeded()
+        var lastErrorSignature: String? = null
+        while (currentCoroutineContext().isActive) {
+            if (cloudClient.isConfigured()) {
+                try {
+                    action()
+                    lastErrorSignature = null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("PizzaClubRepo", "Cloud sync poll note ($source): ${e.message}")
+                    val signature = "$source:${e.javaClass.simpleName}:${e.message?.take(80)}"
+                    if (signature != lastErrorSignature) {
+                        lastErrorSignature = signature
+                        systemLogStore.logError(
+                            source = source,
+                            message = "Error durante $source en Supabase",
+                            throwable = e
+                        )
+                    }
+                }
+            }
+            emit(Unit)
+            delay(intervalMs)
         }
     }
 
     // --- Public Customer Streams ---
 
-    fun observeProducts(): Flow<List<ProductModel>> =
-        db.collection("products")
-            .orderBy("sortOrder", Query.Direction.ASCENDING)
-            .snapshots()
-            .map { snapshot ->
-                snapshot.toObjects(ProductModel::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+    fun observeProducts(): Flow<List<ProductModel>> {
+        val localFlow = dao.observeProducts().map { list ->
+            if (list.isEmpty()) DefaultCatalogDefaults.defaultProducts else list.map { it.toModel() }
+        }
+        val syncFlow = periodicSyncTick(12_000L, source = "Carga de Productos") {
+            val remote = cloudClient.fetchProducts()
+            if (remote.isNotEmpty()) {
+                dao.upsertProducts(remote)
+            } else {
+                systemLogStore.logWarn(
+                    source = "Carga de Productos",
+                    message = "La tabla products en Supabase devolvió 0 registros; usando catálogo local."
+                )
             }
-            .catch { error ->
-                val fsError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-                if (fsError == null && error is CancellationException) throw error
-                handleFirestoreError(fsError ?: error, OperationType.LIST, "products")
-                throw error
-            }
+        }
+        return merge(localFlow, flow {
+            syncFlow.collect { }
+        })
+    }
 
-    fun observeInventory(): Flow<List<InventoryModel>> =
-        db.collection("inventory")
-            .snapshots()
-            .map { snapshot ->
-                snapshot.toObjects(InventoryModel::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-            }
-            .catch { error ->
-                val fsError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-                if (fsError == null && error is CancellationException) throw error
-                handleFirestoreError(fsError ?: error, OperationType.LIST, "inventory")
-                throw error
-            }
+    fun observeInventory(): Flow<List<InventoryModel>> {
+        val localFlow = dao.observeInventory().map { list ->
+            if (list.isEmpty()) DefaultCatalogDefaults.defaultInventory else list.map { it.toModel() }
+        }
+        val syncFlow = periodicSyncTick(8_000L, source = "Sincronización Stock") {
+            val remote = cloudClient.fetchInventory()
+            if (remote.isNotEmpty()) dao.upsertInventory(remote)
+        }
+        return merge(localFlow, flow {
+            syncFlow.collect { }
+        })
+    }
 
-    fun observeBusinessSettings(): Flow<BusinessSettingsModel> =
-        db.collection("business_settings").document("default")
-            .snapshots()
-            .map { snapshot ->
-                snapshot.toObject(BusinessSettingsModel::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                    ?: DefaultCatalogDefaults.defaultSettings
-            }
-            .catch { error ->
-                val fsError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-                if (fsError == null && error is CancellationException) throw error
-                handleFirestoreError(fsError ?: error, OperationType.GET, "business_settings/default")
-                throw error
-            }
+    fun observeBusinessSettings(): Flow<BusinessSettingsModel> {
+        val localFlow = dao.observeSettings().map { entity ->
+            entity?.toModel() ?: DefaultCatalogDefaults.defaultSettings
+        }
+        val syncFlow = periodicSyncTick(15_000L, source = "Sincronización Ajustes") {
+            val remote = cloudClient.fetchBusinessSettings()
+            if (remote != null) dao.upsertSettings(remote)
+        }
+        return merge(localFlow, flow {
+            syncFlow.collect { }
+        })
+    }
 
     fun observeOrderStatusTracker(orderId: String): Flow<OrderStatusTrackerModel?> {
-        if (orderId.length < 20) return flow { emit(null) }
-        return db.collection("order_status").document(orderId)
-            .snapshots()
-            .map { snapshot ->
-                if (snapshot.exists()) {
-                    snapshot.toObject(OrderStatusTrackerModel::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                } else null
+        if (orderId.length < 10) return flow { emit(null) }
+        val localFlow = dao.observeOrderById(orderId).map { it?.toTrackerModel() }
+        val syncFlow = periodicSyncTick(5_000L, source = "Seguimiento Pedido") {
+            val remote = cloudClient.fetchOrderStatusOnce(orderId)
+            if (remote != null) {
+                val existing = dao.getOrderById(orderId)
+                if (existing != null) {
+                    dao.upsertOrder(
+                        existing.copy(
+                            status = remote.status,
+                            whatsappUnlocked = remote.whatsappUnlocked,
+                            updatedAtMillis = remote.updatedAt?.millis ?: System.currentTimeMillis()
+                        )
+                    )
+                }
             }
-            .catch { error ->
-                val fsError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-                if (fsError == null && error is CancellationException) throw error
-                handleFirestoreError(fsError ?: error, OperationType.GET, "order_status/$orderId")
-                throw error
-            }
+        }
+        return merge(localFlow, flow {
+            syncFlow.collect { }
+        })
     }
 
     suspend fun fetchOrderStatusOnce(orderId: String): OrderStatusTrackerModel? {
-        if (orderId.length < 20) return null
+        if (orderId.length < 10) return null
         return try {
-            val snap = db.collection("order_status").document(orderId).get().await()
-            if (snap.exists()) {
-                snap.toObject(OrderStatusTrackerModel::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-            } else {
-                null
+            if (cloudClient.isConfigured()) {
+                val remote = cloudClient.fetchOrderStatusOnce(orderId)
+                if (remote != null) {
+                    val existing = dao.getOrderById(orderId)
+                    if (existing != null) {
+                        dao.upsertOrder(
+                            existing.copy(
+                                status = remote.status,
+                                whatsappUnlocked = remote.whatsappUnlocked,
+                                updatedAtMillis = remote.updatedAt?.millis ?: System.currentTimeMillis()
+                            )
+                        )
+                    }
+                    return remote
+                }
             }
+            dao.getOrderById(orderId)?.toTrackerModel()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.GET, "order_status/$orderId")
-            null
+            Log.w("PizzaClubRepo", "Error fetching status $orderId: ${e.message}")
+            systemLogStore.logError(
+                source = "Seguimiento Pedido",
+                message = "No se pudo consultar el estado de $orderId en Supabase",
+                throwable = e
+            )
+            dao.getOrderById(orderId)?.toTrackerModel()
         }
     }
 
@@ -159,7 +244,6 @@ class PizzaClubRepository(
         val cleanPhone = customerPhone.trim()
         val cleanDate = desiredDate.trim()
         val orderId = "ord_${UUID.randomUUID().toString().replace("-", "").take(24)}"
-        val path = "orders/$orderId"
 
         return try {
             require(cleanName.length in 2..100) { "Ingresá tu nombre completo (mínimo 2 caracteres)." }
@@ -180,451 +264,377 @@ class PizzaClubRepository(
             val dateCode = SimpleDateFormat("yyMMdd", Locale.US).format(Date())
             val randomSuffix = Random.nextInt(1000, 9999)
             val orderNumber = "PC-$dateCode-$randomSuffix"
+            val nowMillis = System.currentTimeMillis()
 
-            val orderPayload = mapOf(
-                "orderNumber" to orderNumber,
-                "customerName" to cleanName,
-                "customerPhone" to cleanPhone,
-                "desiredDate" to cleanDate,
-                "additionalInstructions" to additionalInstructions.trim().take(400).ifBlank { null },
-                "preparationMode" to preparationMode.label,
-                "fulfillmentType" to fulfillmentType.rawValue,
-                "neighborhood" to neighborhood.trim().take(100).ifBlank { null },
-                "streetAndNumber" to streetAndNumber.trim().take(150).ifBlank { null },
-                "deliveryReference" to deliveryReference.trim().take(200).ifBlank { null },
-                "googleMapsLink" to googleMapsLink.trim().take(300).ifBlank { null },
-                "pickupDate" to pickupDate.trim().take(40).ifBlank { null },
-                "pickupTime" to pickupTime.trim().take(20).ifBlank { null },
-                "items" to items.map { it.toMap() },
-                "subtotalPyg" to subtotal,
-                "totalAmountPyg" to subtotal,
-                "status" to OrderStatus.PENDING_PAYMENT.rawValue,
-                "whatsappUnlocked" to false,
-                "paymentMethod" to "BANK_TRANSFER",
-                "paymentBank" to settings.bankName,
-                "paymentAlias" to settings.paymentAlias,
-                "createdAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to FieldValue.serverTimestamp()
-            ).filterValues { it != null } as Map<String, Any>
-
-            val statusPayload = mapOf(
-                "orderNumber" to orderNumber,
-                "status" to OrderStatus.PENDING_PAYMENT.rawValue,
-                "whatsappUnlocked" to false,
-                "totalAmountPyg" to subtotal,
-                "fulfillmentType" to fulfillmentType.rawValue,
-                "createdAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-
-            db.runBatch { batch ->
-                batch.set(db.collection("orders").document(orderId), orderPayload)
-                batch.set(db.collection("order_status").document(orderId), statusPayload)
-            }.await()
-
-            val savedOrder = LocalSavedOrder(
-                orderId = orderId,
+            val orderEntity = OrderEntity(
+                id = orderId,
                 orderNumber = orderNumber,
                 customerName = cleanName,
                 customerPhone = cleanPhone,
                 desiredDate = cleanDate,
-                additionalInstructions = additionalInstructions.trim(),
+                additionalInstructions = additionalInstructions.trim().take(400).ifBlank { null },
                 preparationMode = preparationMode.label,
                 fulfillmentType = fulfillmentType.rawValue,
-                neighborhood = neighborhood.trim(),
-                streetAndNumber = streetAndNumber.trim(),
-                deliveryReference = deliveryReference.trim(),
-                googleMapsLink = googleMapsLink.trim(),
-                pickupDate = pickupDate.trim(),
-                pickupTime = pickupTime.trim(),
-                items = items,
+                neighborhood = neighborhood.trim().take(100).ifBlank { null },
+                streetAndNumber = streetAndNumber.trim().take(150).ifBlank { null },
+                deliveryReference = deliveryReference.trim().take(200).ifBlank { null },
+                googleMapsLink = googleMapsLink.trim().take(300).ifBlank { null },
+                pickupDate = pickupDate.trim().take(40).ifBlank { null },
+                pickupTime = pickupTime.trim().take(20).ifBlank { null },
+                itemsJson = encodeOrderItemsJson(items),
+                subtotalPyg = subtotal,
                 totalAmountPyg = subtotal,
-                paymentBank = settings.bankName,
-                paymentAlias = settings.paymentAlias,
-                whatsappNumber = settings.whatsappNumber,
                 status = OrderStatus.PENDING_PAYMENT.rawValue,
                 whatsappUnlocked = false,
-                createdAtMillis = System.currentTimeMillis()
+                paymentMethod = "BANK_TRANSFER",
+                paymentBank = settings.bankName,
+                paymentAlias = settings.paymentAlias,
+                paymentConfirmedAtMillis = null,
+                confirmedByAdminId = null,
+                confirmedByAdminEmail = null,
+                cancellationReason = null,
+                createdAtMillis = nowMillis,
+                updatedAtMillis = nowMillis
             )
-            Result.success(savedOrder)
+
+            ensureLocalSeeded()
+            dao.upsertOrder(orderEntity)
+            if (cloudClient.isConfigured()) {
+                cloudClient.insertPreOrder(orderEntity)
+            }
+
+            Result.success(
+                LocalSavedOrder(
+                    orderId = orderId,
+                    orderNumber = orderNumber,
+                    customerName = cleanName,
+                    customerPhone = cleanPhone,
+                    desiredDate = cleanDate,
+                    additionalInstructions = additionalInstructions.trim(),
+                    preparationMode = preparationMode.label,
+                    fulfillmentType = fulfillmentType.rawValue,
+                    neighborhood = neighborhood.trim(),
+                    streetAndNumber = streetAndNumber.trim(),
+                    deliveryReference = deliveryReference.trim(),
+                    googleMapsLink = googleMapsLink.trim(),
+                    pickupDate = pickupDate.trim(),
+                    pickupTime = pickupTime.trim(),
+                    items = items,
+                    totalAmountPyg = subtotal,
+                    paymentBank = settings.bankName,
+                    paymentAlias = settings.paymentAlias,
+                    whatsappNumber = settings.whatsappNumber,
+                    status = OrderStatus.PENDING_PAYMENT.rawValue,
+                    whatsappUnlocked = false,
+                    createdAtMillis = nowMillis
+                )
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.CREATE, path)
+            systemLogStore.logError(
+                source = "Envío de Preorden",
+                message = "Error al guardar o sincronizar el pedido $orderId",
+                throwable = e
+            )
             Result.failure(e)
         }
     }
 
-    // --- Admin Authenticated Streams ---
+    // --- Admin Streams ---
 
-    fun observeAllOrders(): Flow<List<OrderModel>> =
-        db.collection("orders")
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .snapshots()
-            .map { snapshot ->
-                snapshot.toObjects(OrderModel::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+    fun observeAllOrders(): Flow<List<OrderModel>> {
+        val localFlow = dao.observeOrders().map { list -> list.map { it.toModel() } }
+        val syncFlow = periodicSyncTick(5_000L, source = "Sincronización Pedidos") {
+            val remote = cloudClient.fetchAllOrders()
+            if (remote.isNotEmpty()) dao.upsertOrders(remote)
+        }
+        return merge(localFlow, flow {
+            syncFlow.collect { }
+        })
+    }
+
+    fun observeAuditLogs(): Flow<List<PaymentAuditLogModel>> {
+        val localFlow = dao.observeAuditLogs().map { list -> list.map { it.toModel() } }
+        val syncFlow = periodicSyncTick(8_000L, source = "Sincronización Auditoría") {
+            val remote = cloudClient.fetchAuditLogs()
+            if (remote.isNotEmpty()) dao.upsertAuditLogs(remote)
+        }
+        return merge(localFlow, flow {
+            syncFlow.collect { }
+        })
+    }
+
+    // --- Admin Operations ---
+
+    suspend fun runSupabaseDiagnostics(): Result<String> {
+        if (!cloudClient.isConfigured()) {
+            val msg = "Base online no configurada: completá URL y Anon Key de Supabase en Ajustes."
+            systemLogStore.logWarn("Diagnóstico Supabase", msg)
+            return Result.success(msg)
+        }
+        val failures = mutableListOf<String>()
+        var productCount = 0
+        var orderCount = 0
+        runCatching { cloudClient.fetchProducts() }
+            .onSuccess { productCount = it.size }
+            .onFailure {
+                failures.add("products")
+                systemLogStore.logError("Diagnóstico Productos", "Fallo al leer tabla products en Supabase", it)
             }
-            .catch { error ->
-                val fsError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-                if (fsError == null && error is CancellationException) throw error
-                handleFirestoreError(fsError ?: error, OperationType.LIST, "orders")
-                throw error
+        runCatching { cloudClient.fetchInventory() }
+            .onFailure {
+                failures.add("inventory")
+                systemLogStore.logError("Diagnóstico Stock", "Fallo al leer tabla inventory en Supabase", it)
+            }
+        runCatching { cloudClient.fetchAllOrders() }
+            .onSuccess { orderCount = it.size }
+            .onFailure {
+                failures.add("orders")
+                systemLogStore.logError("Diagnóstico Pedidos", "Fallo al leer tabla orders en Supabase", it)
+            }
+        runCatching { cloudClient.fetchBusinessSettings() }
+            .onFailure {
+                failures.add("business_settings")
+                systemLogStore.logError("Diagnóstico Ajustes", "Fallo al leer tabla business_settings en Supabase", it)
             }
 
-    fun observeAuditLogs(): Flow<List<PaymentAuditLogModel>> =
-        db.collection("payment_audit_logs")
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .limit(60)
-            .snapshots()
-            .map { snapshot ->
-                snapshot.toObjects(PaymentAuditLogModel::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-            }
-            .catch { error ->
-                val fsError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-                if (fsError == null && error is CancellationException) throw error
-                handleFirestoreError(fsError ?: error, OperationType.LIST, "payment_audit_logs")
-                throw error
-            }
-
-    // --- Admin Seeding & Operations ---
+        return if (failures.isEmpty()) {
+            val okMsg = "Conexión OK ($productCount productos, $orderCount pedidos sincronizados)."
+            systemLogStore.logInfo("Diagnóstico Supabase", okMsg)
+            Result.success(okMsg)
+        } else {
+            val errMsg = "Fallaron las tablas: ${failures.joinToString(", ")}. Revisá el detalle abajo."
+            Result.failure(IllegalStateException(errMsg))
+        }
+    }
 
     suspend fun seedInitialCatalogIfNeeded(): Result<Unit> {
         return try {
-            val (uid, email) = requireAdminIdentity()
-            val productsSnap = db.collection("products").limit(1).get().await()
-            val settingsSnap = db.collection("business_settings").document("default").get().await()
-
-            if (productsSnap.isEmpty || !settingsSnap.exists()) {
-                db.runBatch { batch ->
-                    if (productsSnap.isEmpty) {
-                        for (prod in DefaultCatalogDefaults.defaultProducts) {
-                            batch.set(
-                                db.collection("products").document(prod.id),
-                                mapOf(
-                                    "name" to prod.name,
-                                    "description" to prod.description,
-                                    "pricePyg" to prod.pricePyg,
-                                    "active" to prod.active,
-                                    "imageKey" to prod.imageKey,
-                                    "sortOrder" to prod.sortOrder,
-                                    "createdAt" to FieldValue.serverTimestamp(),
-                                    "updatedAt" to FieldValue.serverTimestamp()
-                                )
-                            )
-                            batch.set(
-                                db.collection("inventory").document(prod.id),
-                                mapOf(
-                                    "productName" to prod.name,
-                                    "stock" to DefaultCatalogDefaults.INITIAL_STOCK,
-                                    "lowStockThreshold" to 5L,
-                                    "updatedBy" to uid,
-                                    "updatedAt" to FieldValue.serverTimestamp()
-                                )
-                            )
-                        }
-                    }
-                    if (!settingsSnap.exists()) {
-                        val s = DefaultCatalogDefaults.defaultSettings
-                        batch.set(
-                            db.collection("business_settings").document("default"),
-                            mapOf(
-                                "brandName" to s.brandName,
-                                "instagramHandle" to s.instagramHandle,
-                                "whatsappNumber" to s.whatsappNumber,
-                                "bankName" to s.bankName,
-                                "paymentAlias" to s.paymentAlias,
-                                "deliveryCity" to s.deliveryCity,
-                                "currency" to s.currency,
-                                "acceptingOrders" to s.acceptingOrders,
-                                "treasureCode" to s.treasureCode,
-                                "treasureReward" to s.treasureReward,
-                                "googleReviewUrl" to s.googleReviewUrl,
-                                "pwaInstallUrl" to s.pwaInstallUrl,
-                                "updatedAt" to FieldValue.serverTimestamp()
-                            )
-                        )
-                    }
-                    // Ensure bootstrapped admin profile doc exists
-                    batch.set(
-                        db.collection("administrators").document(uid),
-                        mapOf(
-                            "uid" to uid,
-                            "email" to email,
-                            "displayName" to (auth.currentUser?.displayName ?: "Administrador"),
-                            "role" to "SUPER_ADMIN",
-                            "active" to true,
-                            "createdAt" to FieldValue.serverTimestamp()
-                        )
-                    )
-                }.await()
+            ensureLocalSeeded()
+            if (cloudClient.isConfigured()) {
+                val remoteProducts = cloudClient.fetchProducts()
+                if (remoteProducts.isNotEmpty()) {
+                    dao.upsertProducts(remoteProducts)
+                }
+                val remoteInv = cloudClient.fetchInventory()
+                if (remoteInv.isNotEmpty()) {
+                    dao.upsertInventory(remoteInv)
+                }
+                cloudClient.fetchBusinessSettings()?.let { dao.upsertSettings(it) }
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, "products/seed")
+            systemLogStore.logError(
+                source = "Carga Inicial Catálogo",
+                message = "Error al cargar catálogo/inventario desde Supabase",
+                throwable = e
+            )
             Result.failure(e)
         }
     }
 
-    /**
-     * Manual Payment Confirmation:
-     * Executes an atomic Firestore transaction that:
-     * 1. Verifies the order is still PENDING_PAYMENT.
-     * 2. Reads all inventory items and guarantees stock NEVER goes below 0.
-     * 3. Deducts stock per flavor.
-     * 4. Marks order and order_status as PAYMENT_CONFIRMED & unlocks WhatsApp.
-     * 5. Records an immutable entry in payment_audit_logs.
-     */
     suspend fun confirmOrderPayment(orderId: String, note: String = "Depósito Itaú verificado manualmente"): Result<Unit> {
-        val path = "orders/$orderId"
         return try {
-            val (uid, email) = requireAdminIdentity()
             require(orderId.isNotBlank()) { "ID de pedido inválido." }
+            val now = System.currentTimeMillis()
+            val adminId = "admin_local"
+            val adminEmail = DefaultCatalogDefaults.BOOTSTRAP_ADMIN_EMAIL
 
-            db.runTransaction { tx ->
-                val orderRef = db.collection("orders").document(orderId)
-                val statusRef = db.collection("order_status").document(orderId)
-                val orderSnap = tx.get(orderRef)
-                if (!orderSnap.exists()) {
-                    throw IllegalStateException("El pedido no existe.")
+            dao.confirmOrderPaymentLocally(orderId, adminId, adminEmail, note, now)
+            val updatedOrder = dao.getOrderById(orderId)
+
+            if (cloudClient.isConfigured() && updatedOrder != null) {
+                for (item in decodeOrderItemsJson(updatedOrder.itemsJson)) {
+                    dao.getInventoryById(item.productId)?.let { cloudClient.upsertInventoryItem(it) }
                 }
-                val currentStatus = orderSnap.getString("status") ?: OrderStatus.PENDING_PAYMENT.rawValue
-                if (currentStatus != OrderStatus.PENDING_PAYMENT.rawValue) {
-                    throw IllegalStateException("El pedido ya se encuentra en estado: $currentStatus")
-                }
-
-                val orderNumber = orderSnap.getString("orderNumber") ?: orderId
-                val totalAmountPyg = (orderSnap.get("totalAmountPyg") as? Number)?.toLong() ?: 0L
-
-                @Suppress("UNCHECKED_CAST")
-                val rawItems = orderSnap.get("items") as? List<Map<String, Any?>> ?: emptyList()
-                val invUpdates = mutableListOf<Triple<com.google.firebase.firestore.DocumentReference, Long, String>>()
-
-                for (rawItem in rawItems) {
-                    val prodId = rawItem["productId"] as? String ?: continue
-                    val prodName = rawItem["productName"] as? String ?: prodId
-                    val qty = (rawItem["quantity"] as? Number)?.toLong() ?: 0L
-                    if (qty <= 0L) continue
-
-                    val invRef = db.collection("inventory").document(prodId)
-                    val invSnap = tx.get(invRef)
-                    val currentStock = if (invSnap.exists()) {
-                        (invSnap.get("stock") as? Number)?.toLong() ?: 0L
-                    } else {
-                        DefaultCatalogDefaults.INITIAL_STOCK
+                cloudClient.patchOrderAndStatus(
+                    orderId = orderId,
+                    orderPatch = JSONObject().apply {
+                        put("status", OrderStatus.PAYMENT_CONFIRMED.rawValue)
+                        put("whatsapp_unlocked", true)
+                        put("payment_confirmed_at_ms", now)
+                        put("confirmed_by_admin_id", adminId)
+                        put("confirmed_by_admin_email", adminEmail)
+                        put("updated_at_ms", now)
+                    },
+                    statusPatch = JSONObject().apply {
+                        put("status", OrderStatus.PAYMENT_CONFIRMED.rawValue)
+                        put("whatsapp_unlocked", true)
+                        put("updated_at_ms", now)
                     }
-                    val nextStock = currentStock - qty
-                    if (nextStock < 0L) {
-                        throw IllegalStateException(
-                            "Stock insuficiente para $prodName (disponible: $currentStock, requerido: $qty)."
-                        )
-                    }
-                    invUpdates.add(Triple(invRef, nextStock, prodName))
-                }
-
-                // Perform all writes after reads
-                for ((invRef, nextStock, prodName) in invUpdates) {
-                    tx.set(
-                        invRef,
-                        mapOf(
-                            "productName" to prodName,
-                            "stock" to nextStock,
-                            "lowStockThreshold" to 5L,
-                            "updatedBy" to uid,
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    )
-                }
-
-                tx.update(
-                    orderRef,
-                    mapOf(
-                        "status" to OrderStatus.PAYMENT_CONFIRMED.rawValue,
-                        "whatsappUnlocked" to true,
-                        "paymentConfirmedAt" to FieldValue.serverTimestamp(),
-                        "confirmedByAdminId" to uid,
-                        "confirmedByAdminEmail" to email,
-                        "updatedAt" to FieldValue.serverTimestamp()
+                )
+                cloudClient.insertAuditLog(
+                    AuditLogEntity(
+                        id = "log_${UUID.randomUUID().toString().replace("-", "").take(20)}",
+                        orderId = orderId,
+                        orderNumber = updatedOrder.orderNumber,
+                        adminId = adminId,
+                        adminEmail = adminEmail,
+                        action = "CONFIRM_PAYMENT",
+                        previousStatus = OrderStatus.PENDING_PAYMENT.rawValue,
+                        newStatus = OrderStatus.PAYMENT_CONFIRMED.rawValue,
+                        amountPyg = updatedOrder.totalAmountPyg,
+                        note = note.take(300),
+                        createdAtMillis = now
                     )
                 )
-
-                tx.update(
-                    statusRef,
-                    mapOf(
-                        "status" to OrderStatus.PAYMENT_CONFIRMED.rawValue,
-                        "whatsappUnlocked" to true,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                )
-
-                val logRef = db.collection("payment_audit_logs").document("log_${UUID.randomUUID().toString().replace("-", "").take(20)}")
-                tx.set(
-                    logRef,
-                    mapOf(
-                        "orderId" to orderId,
-                        "orderNumber" to orderNumber,
-                        "adminId" to uid,
-                        "adminEmail" to email,
-                        "action" to "CONFIRM_PAYMENT",
-                        "previousStatus" to OrderStatus.PENDING_PAYMENT.rawValue,
-                        "newStatus" to OrderStatus.PAYMENT_CONFIRMED.rawValue,
-                        "amountPyg" to totalAmountPyg,
-                        "note" to note.take(300),
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                )
-            }.await()
-
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, path)
+            systemLogStore.logError("Admin Confirmar Pago", "Error al sincronizar confirmación de $orderId", e)
             Result.failure(e)
         }
     }
 
     suspend fun advanceOrderStatus(order: OrderModel, nextStatus: OrderStatus): Result<Unit> {
-        val path = "orders/${order.id}"
         return try {
-            val (uid, email) = requireAdminIdentity()
             require(nextStatus != OrderStatus.PENDING_PAYMENT && nextStatus != OrderStatus.CANCELLED)
+            val now = System.currentTimeMillis()
+            val existing = dao.getOrderById(order.id)
+            if (existing != null) {
+                dao.upsertOrder(
+                    existing.copy(
+                        status = nextStatus.rawValue,
+                        whatsappUnlocked = true,
+                        updatedAtMillis = now
+                    )
+                )
+            }
+            val log = AuditLogEntity(
+                id = "log_${UUID.randomUUID().toString().replace("-", "").take(20)}",
+                orderId = order.id,
+                orderNumber = order.orderNumber,
+                adminId = "admin_local",
+                adminEmail = DefaultCatalogDefaults.BOOTSTRAP_ADMIN_EMAIL,
+                action = "STATUS_CHANGE",
+                previousStatus = order.status,
+                newStatus = nextStatus.rawValue,
+                amountPyg = order.totalAmountPyg,
+                note = "Estado cambiado a ${nextStatus.labelEs}",
+                createdAtMillis = now
+            )
+            dao.insertAuditLog(log)
 
-            db.runBatch { batch ->
-                batch.update(
-                    db.collection("orders").document(order.id),
-                    mapOf(
-                        "status" to nextStatus.rawValue,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
+            if (cloudClient.isConfigured()) {
+                cloudClient.patchOrderAndStatus(
+                    orderId = order.id,
+                    orderPatch = JSONObject().apply {
+                        put("status", nextStatus.rawValue)
+                        put("updated_at_ms", now)
+                    },
+                    statusPatch = JSONObject().apply {
+                        put("status", nextStatus.rawValue)
+                        put("whatsapp_unlocked", true)
+                        put("updated_at_ms", now)
+                    }
                 )
-                batch.update(
-                    db.collection("order_status").document(order.id),
-                    mapOf(
-                        "status" to nextStatus.rawValue,
-                        "whatsappUnlocked" to true,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                )
-                val logRef = db.collection("payment_audit_logs").document("log_${UUID.randomUUID().toString().replace("-", "").take(20)}")
-                batch.set(
-                    logRef,
-                    mapOf(
-                        "orderId" to order.id,
-                        "orderNumber" to order.orderNumber,
-                        "adminId" to uid,
-                        "adminEmail" to email,
-                        "action" to "STATUS_CHANGE",
-                        "previousStatus" to order.status,
-                        "newStatus" to nextStatus.rawValue,
-                        "amountPyg" to order.totalAmountPyg,
-                        "note" to "Estado cambiado a ${nextStatus.labelEs}",
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                )
-            }.await()
+                cloudClient.insertAuditLog(log)
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
         }
     }
 
     suspend fun cancelOrder(order: OrderModel, reason: String): Result<Unit> {
-        val path = "orders/${order.id}"
         return try {
-            val (uid, email) = requireAdminIdentity()
             val cleanReason = reason.trim().ifBlank { "Cancelado por el administrador" }.take(200)
+            val now = System.currentTimeMillis()
+            val existing = dao.getOrderById(order.id)
+            if (existing != null) {
+                dao.upsertOrder(
+                    existing.copy(
+                        status = OrderStatus.CANCELLED.rawValue,
+                        whatsappUnlocked = false,
+                        cancellationReason = cleanReason,
+                        updatedAtMillis = now
+                    )
+                )
+            }
+            val log = AuditLogEntity(
+                id = "log_${UUID.randomUUID().toString().replace("-", "").take(20)}",
+                orderId = order.id,
+                orderNumber = order.orderNumber,
+                adminId = "admin_local",
+                adminEmail = DefaultCatalogDefaults.BOOTSTRAP_ADMIN_EMAIL,
+                action = "CANCEL_ORDER",
+                previousStatus = order.status,
+                newStatus = OrderStatus.CANCELLED.rawValue,
+                amountPyg = order.totalAmountPyg,
+                note = cleanReason,
+                createdAtMillis = now
+            )
+            dao.insertAuditLog(log)
 
-            db.runBatch { batch ->
-                batch.update(
-                    db.collection("orders").document(order.id),
-                    mapOf(
-                        "status" to OrderStatus.CANCELLED.rawValue,
-                        "whatsappUnlocked" to false,
-                        "cancellationReason" to cleanReason,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
+            if (cloudClient.isConfigured()) {
+                cloudClient.patchOrderAndStatus(
+                    orderId = order.id,
+                    orderPatch = JSONObject().apply {
+                        put("status", OrderStatus.CANCELLED.rawValue)
+                        put("whatsapp_unlocked", false)
+                        put("cancellation_reason", cleanReason)
+                        put("updated_at_ms", now)
+                    },
+                    statusPatch = JSONObject().apply {
+                        put("status", OrderStatus.CANCELLED.rawValue)
+                        put("whatsapp_unlocked", false)
+                        put("updated_at_ms", now)
+                    }
                 )
-                batch.update(
-                    db.collection("order_status").document(order.id),
-                    mapOf(
-                        "status" to OrderStatus.CANCELLED.rawValue,
-                        "whatsappUnlocked" to false,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                )
-                val logRef = db.collection("payment_audit_logs").document("log_${UUID.randomUUID().toString().replace("-", "").take(20)}")
-                batch.set(
-                    logRef,
-                    mapOf(
-                        "orderId" to order.id,
-                        "orderNumber" to order.orderNumber,
-                        "adminId" to uid,
-                        "adminEmail" to email,
-                        "action" to "CANCEL_ORDER",
-                        "previousStatus" to order.status,
-                        "newStatus" to OrderStatus.CANCELLED.rawValue,
-                        "amountPyg" to order.totalAmountPyg,
-                        "note" to cleanReason,
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                )
-            }.await()
+                cloudClient.insertAuditLog(log)
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
         }
     }
 
     suspend fun adjustInventoryStock(productId: String, productName: String, newStock: Long, lowThreshold: Long): Result<Unit> {
-        val path = "inventory/$productId"
         return try {
-            val (uid, email) = requireAdminIdentity()
             require(newStock >= 0L) { "El stock no puede ser negativo." }
             require(lowThreshold >= 0L) { "La alerta mínima no puede ser negativa." }
+            val now = System.currentTimeMillis()
+            val inv = InventoryEntity(
+                id = productId,
+                productName = productName,
+                stock = newStock,
+                lowStockThreshold = lowThreshold,
+                updatedBy = "admin_local",
+                updatedAtMillis = now
+            )
+            dao.upsertInventoryItem(inv)
+            val log = AuditLogEntity(
+                id = "log_${UUID.randomUUID().toString().replace("-", "").take(20)}",
+                orderId = productId,
+                orderNumber = "STOCK-$productId".take(32),
+                adminId = "admin_local",
+                adminEmail = DefaultCatalogDefaults.BOOTSTRAP_ADMIN_EMAIL,
+                action = "STOCK_ADJUSTMENT",
+                previousStatus = productName,
+                newStatus = "STOCK_$newStock",
+                amountPyg = 0L,
+                note = "Stock ajustado a $newStock unidades ($productName)",
+                createdAtMillis = now
+            )
+            dao.insertAuditLog(log)
 
-            db.runBatch { batch ->
-                batch.set(
-                    db.collection("inventory").document(productId),
-                    mapOf(
-                        "productName" to productName,
-                        "stock" to newStock,
-                        "lowStockThreshold" to lowThreshold,
-                        "updatedBy" to uid,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                )
-                val logRef = db.collection("payment_audit_logs").document("log_${UUID.randomUUID().toString().replace("-", "").take(20)}")
-                batch.set(
-                    logRef,
-                    mapOf(
-                        "orderId" to productId,
-                        "orderNumber" to "STOCK-$productId".take(32),
-                        "adminId" to uid,
-                        "adminEmail" to email,
-                        "action" to "STOCK_ADJUSTMENT",
-                        "previousStatus" to productName,
-                        "newStatus" to "STOCK_$newStock",
-                        "amountPyg" to 0L,
-                        "note" to "Stock ajustado a $newStock unidades ($productName)",
-                        "createdAt" to FieldValue.serverTimestamp()
-                    )
-                )
-            }.await()
+            if (cloudClient.isConfigured()) {
+                cloudClient.upsertInventoryItem(inv)
+                cloudClient.insertAuditLog(log)
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
         }
     }
@@ -639,89 +649,79 @@ class PizzaClubRepository(
         sortOrder: Long,
         isNew: Boolean
     ): Result<Unit> {
-        val path = "products/$productId"
         return try {
-            val (uid, _) = requireAdminIdentity()
             require(productId.matches(Regex("^[a-zA-Z0-9_\\-]+$"))) { "ID de producto inválido." }
             require(name.trim().length in 1..80) { "Nombre de pizza inválido." }
             require(pricePyg in 1..10_000_000) { "Precio debe ser mayor a 0 Gs." }
+            val now = System.currentTimeMillis()
 
+            val product = ProductEntity(
+                id = productId,
+                name = name.trim(),
+                description = description.trim().take(300),
+                pricePyg = pricePyg,
+                active = active,
+                imageKey = imageKey,
+                sortOrder = sortOrder,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            )
+            dao.upsertProduct(product)
+            if (cloudClient.isConfigured()) {
+                cloudClient.upsertProduct(product)
+            }
             if (isNew) {
-                db.runBatch { batch ->
-                    batch.set(
-                        db.collection("products").document(productId),
-                        mapOf(
-                            "name" to name.trim(),
-                            "description" to description.trim().take(300),
-                            "pricePyg" to pricePyg,
-                            "active" to active,
-                            "imageKey" to imageKey,
-                            "sortOrder" to sortOrder,
-                            "createdAt" to FieldValue.serverTimestamp(),
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    )
-                    batch.set(
-                        db.collection("inventory").document(productId),
-                        mapOf(
-                            "productName" to name.trim(),
-                            "stock" to DefaultCatalogDefaults.INITIAL_STOCK,
-                            "lowStockThreshold" to 5L,
-                            "updatedBy" to uid,
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    )
-                }.await()
-            } else {
-                db.collection("products").document(productId).update(
-                    mapOf(
-                        "name" to name.trim(),
-                        "description" to description.trim().take(300),
-                        "pricePyg" to pricePyg,
-                        "active" to active,
-                        "imageKey" to imageKey,
-                        "sortOrder" to sortOrder,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                ).await()
+                val inv = InventoryEntity(
+                    id = productId,
+                    productName = name.trim(),
+                    stock = DefaultCatalogDefaults.INITIAL_STOCK,
+                    lowStockThreshold = 5L,
+                    updatedBy = "admin_local",
+                    updatedAtMillis = now
+                )
+                dao.upsertInventoryItem(inv)
+                if (cloudClient.isConfigured()) {
+                    cloudClient.upsertInventoryItem(inv)
+                }
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, path)
             Result.failure(e)
         }
     }
 
     suspend fun updateBusinessSettings(settings: BusinessSettingsModel): Result<Unit> {
-        val path = "business_settings/default"
         return try {
-            requireAdminIdentity()
-            db.collection("business_settings").document("default").set(
-                mapOf(
-                    "brandName" to settings.brandName.trim().take(80),
-                    "instagramHandle" to settings.instagramHandle.trim().take(60),
-                    "whatsappNumber" to settings.whatsappNumber.trim().take(20),
-                    "bankName" to settings.bankName.trim().take(80),
-                    "paymentAlias" to settings.paymentAlias.trim().take(120),
-                    "deliveryCity" to settings.deliveryCity.trim().take(80),
-                    "currency" to "PYG",
-                    "acceptingOrders" to settings.acceptingOrders,
-                    "treasureCode" to settings.treasureCode.trim().uppercase().take(40).ifBlank { "PIZZACLUB-ORO" },
-                    "treasureReward" to settings.treasureReward.trim().take(160).ifBlank { "Dip Artesanal + 10% OFF en tu próxima pizza" },
-                    "googleReviewUrl" to settings.googleReviewUrl.trim().take(300)
-                        .ifBlank { DefaultCatalogDefaults.defaultSettings.googleReviewUrl },
-                    "pwaInstallUrl" to settings.pwaInstallUrl.trim().take(300)
-                        .ifBlank { DefaultCatalogDefaults.defaultSettings.pwaInstallUrl },
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            val now = System.currentTimeMillis()
+            val entity = BusinessSettingsEntity(
+                id = "default",
+                brandName = settings.brandName.trim().take(80),
+                instagramHandle = settings.instagramHandle.trim().take(60),
+                whatsappNumber = settings.whatsappNumber.trim().take(20),
+                bankName = settings.bankName.trim().take(80),
+                paymentAlias = settings.paymentAlias.trim().take(120),
+                deliveryCity = settings.deliveryCity.trim().take(80),
+                currency = "PYG",
+                acceptingOrders = settings.acceptingOrders,
+                treasureCode = settings.treasureCode.trim().uppercase().take(40).ifBlank { "PIZZACLUB-ORO" },
+                treasureReward = settings.treasureReward.trim().take(160).ifBlank { "Dip Artesanal + 10% OFF en tu próxima pizza" },
+                googleReviewUrl = settings.googleReviewUrl.trim().take(300)
+                    .ifBlank { DefaultCatalogDefaults.defaultSettings.googleReviewUrl },
+                pwaInstallUrl = settings.pwaInstallUrl.trim().take(300)
+                    .ifBlank { DefaultCatalogDefaults.defaultSettings.pwaInstallUrl },
+                updatedAtMillis = now
+            )
+            dao.upsertSettings(entity)
+            if (cloudClient.isConfigured()) {
+                cloudClient.upsertBusinessSettings(entity)
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, path)
+            systemLogStore.logError("Admin Ajustes", "Error al guardar configuración comercial en Supabase", e)
             Result.failure(e)
         }
     }

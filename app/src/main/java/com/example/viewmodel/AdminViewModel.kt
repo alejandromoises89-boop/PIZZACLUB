@@ -11,8 +11,8 @@ import com.example.data.OrderStatus
 import com.example.data.PaymentAuditLogModel
 import com.example.data.PizzaClubRepository
 import com.example.data.ProductModel
-import com.example.data.unwrapFirestoreMessage
-import com.google.firebase.firestore.FirebaseFirestoreException
+import com.example.data.SystemLogEntry
+import com.example.data.unwrapBackendMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -74,6 +74,10 @@ class AdminViewModel(
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
 
+    val systemLogs: StateFlow<List<SystemLogEntry>> = repository.observeSystemLogs()
+
+    fun isCloudConnected(): Boolean = repository.isCloudConnected()
+
     private val ordersFlow = repository.observeAllOrders()
     private val productsFlow = repository.observeProducts()
     private val inventoryFlow = repository.observeInventory()
@@ -97,11 +101,9 @@ class AdminViewModel(
             kpis = kpis
         ) as AdminDashboardUiState
     }.catch { error ->
-        val fsError = generateSequence(error) { it.cause }
-            .filterIsInstance<FirebaseFirestoreException>().firstOrNull()
-        if (fsError == null && error is CancellationException) throw error
-        Log.w("AdminVM", "Error observing admin dashboard", fsError ?: error)
-        emit(AdminDashboardUiState.Error(unwrapFirestoreMessage(error, "Error al cargar el panel administrativo.")))
+        if (error is CancellationException) throw error
+        Log.w("AdminVM", "Error observing admin dashboard", error)
+        emit(AdminDashboardUiState.Error(unwrapBackendMessage(error, "Error al cargar el panel administrativo.")))
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000L),
@@ -122,6 +124,23 @@ class AdminViewModel(
 
     fun clearMessage() {
         _actionMessage.value = null
+    }
+
+    fun clearSystemLogs() {
+        repository.clearSystemLogs()
+    }
+
+    fun runSupabaseDiagnostics() {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = repository.runSupabaseDiagnostics()
+            _isBusy.value = false
+            res.onSuccess { msg ->
+                _actionMessage.value = msg
+            }.onFailure { err ->
+                _actionMessage.value = err.message ?: "Error al diagnosticar Supabase."
+            }
+        }
     }
 
     fun confirmPayment(orderId: String, note: String) {
@@ -145,7 +164,7 @@ class AdminViewModel(
             res.onSuccess {
                 _actionMessage.value = "Pedido ${order.orderNumber} actualizado a: ${nextStatus.labelEs}."
             }.onFailure { err ->
-                _actionMessage.value = unwrapFirestoreMessage(err, "No se pudo actualizar el estado.")
+                _actionMessage.value = unwrapBackendMessage(err, "No se pudo actualizar el estado.")
             }
         }
     }
@@ -158,7 +177,7 @@ class AdminViewModel(
             res.onSuccess {
                 _actionMessage.value = "Pedido ${order.orderNumber} cancelado."
             }.onFailure { err ->
-                _actionMessage.value = unwrapFirestoreMessage(err, "No se pudo cancelar el pedido.")
+                _actionMessage.value = unwrapBackendMessage(err, "No se pudo cancelar el pedido.")
             }
         }
     }
@@ -171,7 +190,7 @@ class AdminViewModel(
             res.onSuccess {
                 _actionMessage.value = "Stock de $productName actualizado a $newStock."
             }.onFailure { err ->
-                _actionMessage.value = unwrapFirestoreMessage(err, "No se pudo actualizar el stock.")
+                _actionMessage.value = unwrapBackendMessage(err, "No se pudo actualizar el stock.")
             }
         }
     }
@@ -193,7 +212,7 @@ class AdminViewModel(
             res.onSuccess {
                 _actionMessage.value = if (isNew) "Sabor '$name' agregado al catálogo." else "Producto '$name' actualizado."
             }.onFailure { err ->
-                _actionMessage.value = unwrapFirestoreMessage(err, "No se pudo guardar el producto.")
+                _actionMessage.value = unwrapBackendMessage(err, "No se pudo guardar el producto.")
             }
         }
     }
@@ -206,7 +225,7 @@ class AdminViewModel(
             res.onSuccess {
                 _actionMessage.value = "Configuración comercial guardada."
             }.onFailure { err ->
-                _actionMessage.value = unwrapFirestoreMessage(err, "No se pudo guardar la configuración.")
+                _actionMessage.value = unwrapBackendMessage(err, "No se pudo guardar la configuración.")
             }
         }
     }

@@ -42,7 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -70,6 +70,7 @@ import com.example.data.BusinessSettingsModel
 import com.example.data.FulfillmentType
 import com.example.data.OrderModel
 import com.example.data.OrderStatus
+import com.example.data.SystemLogLevel
 import com.example.data.buildAdminCustomerThankYouMessage
 import com.example.data.formatPyg
 import com.example.ui.components.OrderStatusBadge
@@ -99,6 +100,8 @@ fun AdminDashboardScreen(
     val selectedFilter by viewModel.selectedOrderFilter.collectAsStateWithLifecycle()
     val actionMessage by viewModel.actionMessage.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val systemLogs by viewModel.systemLogs.collectAsStateWithLifecycle()
+    val errorLogCount = remember(systemLogs) { systemLogs.count { it.level == SystemLogLevel.ERROR } }
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var orderToConfirm by remember { mutableStateOf<OrderModel?>(null) }
@@ -164,13 +167,27 @@ fun AdminDashboardScreen(
                         }
                     }
 
-                    val tabs = listOf("Resumen", "Pedidos", "Stock y Menú", "Ajustes")
-                    PrimaryTabRow(selectedTabIndex = selectedTab) {
+                    val tabs = listOf(
+                        "Resumen",
+                        "Pedidos",
+                        "Stock y Menú",
+                        "Ajustes",
+                        if (errorLogCount > 0) "Logs ($errorLogCount)" else "Logs"
+                    )
+                    PrimaryScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 8.dp) {
                         tabs.forEachIndexed { index, title ->
                             Tab(
                                 selected = selectedTab == index,
                                 onClick = { selectedTab = index },
-                                text = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                modifier = Modifier.testTag("admin_tab_$index"),
+                                text = {
+                                    Text(
+                                        text = title,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (index == 4 && errorLogCount > 0) DangerRed else Color.Unspecified
+                                    )
+                                }
                             )
                         }
                     }
@@ -243,6 +260,13 @@ fun AdminDashboardScreen(
                             auditLogs = state.auditLogs,
                             isBusy = isBusy,
                             onSaveSettings = viewModel::saveBusinessSettings
+                        )
+                        4 -> AdminSystemLogsTab(
+                            logs = systemLogs,
+                            isCloudConnected = viewModel.isCloudConnected(),
+                            isBusy = isBusy,
+                            onRunDiagnostics = viewModel::runSupabaseDiagnostics,
+                            onClearLogs = viewModel::clearSystemLogs
                         )
                     }
                 }

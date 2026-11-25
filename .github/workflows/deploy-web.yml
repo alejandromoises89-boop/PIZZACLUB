@@ -26,12 +26,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Inject optional Firebase Web config
+      - name: Inject optional Supabase DB config
         env:
-          FIREBASE_CONFIG_JS: ${{ secrets.FIREBASE_CONFIG_JS }}
+          DB_CONFIG_JS: ${{ secrets.DB_CONFIG_JS }}
         run: |
-          if [ -n "$FIREBASE_CONFIG_JS" ]; then
-            printf '%s\n' "$FIREBASE_CONFIG_JS" > web-pwa/firebase-config.js
+          if [ -n "$DB_CONFIG_JS" ]; then
+            printf '%s\n' "$DB_CONFIG_JS" > web-pwa/db-config.js
           fi
 
       - name: Setup GitHub Pages
@@ -45,41 +45,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-  deploy-firebase-hosting:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check optional Firebase Hosting secret
-        id: check_secret
-        env:
-          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0684931110 }}
-        run: |
-          if [ -n "$FIREBASE_SA" ]; then
-            echo "has_secret=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_secret=false" >> "$GITHUB_OUTPUT"
-            echo "FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0684931110 no configurado; omitiendo Firebase Hosting."
-          fi
-
-      - name: Checkout repository
-        if: steps.check_secret.outputs.has_secret == 'true'
-        uses: actions/checkout@v4
-
-      - name: Inject optional Firebase Web config
-        if: steps.check_secret.outputs.has_secret == 'true'
-        env:
-          FIREBASE_CONFIG_JS: ${{ secrets.FIREBASE_CONFIG_JS }}
-        run: |
-          if [ -n "$FIREBASE_CONFIG_JS" ]; then
-            printf '%s\n' "$FIREBASE_CONFIG_JS" > web-pwa/firebase-config.js
-          fi
-
-      - name: Deploy to Firebase Hosting
-        if: steps.check_secret.outputs.has_secret == 'true'
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0684931110 }}
-          projectId: gen-lang-client-0684931110
-          channelId: live
-          entryPoint: .

@@ -1,12 +1,12 @@
 package com.example.data
 
-import androidx.annotation.Keep
-import com.google.firebase.Timestamp
-import com.google.firebase.firestore.DocumentId
-import com.google.firebase.firestore.IgnoreExtraProperties
-import com.google.firebase.firestore.ServerTimestamp
 import java.text.NumberFormat
+import java.util.Date
 import java.util.Locale
+
+data class EpochTimestamp(val millis: Long = System.currentTimeMillis()) {
+    fun toDate(): Date = Date(millis)
+}
 
 enum class PreparationMode(val label: String, val shortDesc: String) {
     READY_TO_EAT("Lista para comer", "Recién salida del horno, caliente y lista para servir."),
@@ -47,33 +47,27 @@ enum class OrderStatus(
     }
 }
 
-@Keep
-@IgnoreExtraProperties
 data class ProductModel(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val name: String = "",
     val description: String = "",
     val pricePyg: Long = 50_000L,
     val active: Boolean = true,
     val imageKey: String = "pepperoni",
     val sortOrder: Long = 0L,
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAt: EpochTimestamp? = null,
+    val updatedAt: EpochTimestamp? = null
 )
 
-@Keep
-@IgnoreExtraProperties
 data class InventoryModel(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val productName: String = "",
     val stock: Long = 20L,
     val lowStockThreshold: Long = 5L,
     val updatedBy: String = "",
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val updatedAt: EpochTimestamp? = null
 )
 
-@Keep
-@IgnoreExtraProperties
 data class OrderLineItem(
     val productId: String = "",
     val productName: String = "",
@@ -90,10 +84,8 @@ data class OrderLineItem(
     )
 }
 
-@Keep
-@IgnoreExtraProperties
 data class OrderModel(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val orderNumber: String = "",
     val customerName: String = "",
     val customerPhone: String = "",
@@ -115,36 +107,32 @@ data class OrderModel(
     val paymentMethod: String = "BANK_TRANSFER",
     val paymentBank: String = "Itaú Paraguay",
     val paymentAlias: String = "alejandromoises89@gmail.com",
-    val paymentConfirmedAt: Timestamp? = null,
+    val paymentConfirmedAt: EpochTimestamp? = null,
     val confirmedByAdminId: String? = null,
     val confirmedByAdminEmail: String? = null,
     val cancellationReason: String? = null,
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAt: EpochTimestamp? = null,
+    val updatedAt: EpochTimestamp? = null
 ) {
     fun statusEnum(): OrderStatus = OrderStatus.fromRaw(status)
     fun fulfillmentEnum(): FulfillmentType = FulfillmentType.fromRaw(fulfillmentType)
 }
 
-@Keep
-@IgnoreExtraProperties
 data class OrderStatusTrackerModel(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val orderNumber: String = "",
     val status: String = OrderStatus.PENDING_PAYMENT.rawValue,
     val whatsappUnlocked: Boolean = false,
     val totalAmountPyg: Long = 0L,
     val fulfillmentType: String = FulfillmentType.DELIVERY.rawValue,
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAt: EpochTimestamp? = null,
+    val updatedAt: EpochTimestamp? = null
 ) {
     fun statusEnum(): OrderStatus = OrderStatus.fromRaw(status)
 }
 
-@Keep
-@IgnoreExtraProperties
 data class BusinessSettingsModel(
-    @DocumentId val id: String = "default",
+    val id: String = "default",
     val brandName: String = "Pizza Club",
     val instagramHandle: String = "@Pizza.Club1",
     val whatsappNumber: String = "59593551936",
@@ -156,14 +144,12 @@ data class BusinessSettingsModel(
     val treasureCode: String = "PIZZACLUB-ORO",
     val treasureReward: String = "Dip Artesanal + 10% OFF en tu próxima pizza",
     val googleReviewUrl: String = "https://www.google.com/maps/search/?api=1&query=Pizza+Club+Ciudad+del+Este+Paraguay",
-    val pwaInstallUrl: String = "https://gen-lang-client-0684931110.web.app",
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val pwaInstallUrl: String = "https://github.com",
+    val updatedAt: EpochTimestamp? = null
 )
 
-@Keep
-@IgnoreExtraProperties
 data class PaymentAuditLogModel(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val orderId: String = "",
     val orderNumber: String = "",
     val adminId: String = "",
@@ -173,7 +159,7 @@ data class PaymentAuditLogModel(
     val newStatus: String = "",
     val amountPyg: Long = 0L,
     val note: String? = null,
-    @ServerTimestamp val createdAt: Timestamp? = null
+    val createdAt: EpochTimestamp? = null
 )
 
 data class LocalSavedOrder(
@@ -219,7 +205,7 @@ object DefaultCatalogDefaults {
         treasureCode = "PIZZACLUB-ORO",
         treasureReward = "Dip Artesanal + 10% OFF en tu próxima pizza",
         googleReviewUrl = "https://www.google.com/maps/search/?api=1&query=Pizza+Club+Ciudad+del+Este+Paraguay",
-        pwaInstallUrl = "https://gen-lang-client-0684931110.web.app"
+        pwaInstallUrl = "https://github.com"
     )
 
     val defaultProducts = listOf(
@@ -407,5 +393,16 @@ fun formatOrderCountdownLabel(
         OrderStatus.PREPARING -> "Horneando · Listo en $mmss"
         OrderStatus.OUT_FOR_DELIVERY -> "En camino · Llega en $mmss"
         else -> mmss
+    }
+}
+
+fun unwrapBackendMessage(error: Throwable, fallback: String): String {
+    val msg = error.message
+    return when {
+        msg?.contains("Unable to resolve host", ignoreCase = true) == true ||
+            msg?.contains("Failed to connect", ignoreCase = true) == true ->
+            "Sin conexión con el servidor. Verificá tu internet e intentá de nuevo."
+        !msg.isNullOrBlank() -> msg
+        else -> fallback
     }
 }

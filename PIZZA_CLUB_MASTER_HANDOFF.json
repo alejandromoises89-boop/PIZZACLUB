@@ -1,6 +1,6 @@
 {
-  "schema_version": "1.0.0",
-  "generated_at": "2026-11-24",
+  "schema_version": "2.0.0",
+  "generated_at": "2026-11-25",
   "project": {
     "name": "Pizza Club",
     "tagline": "Pizzas artesanales de masa madre en Ciudad del Este, Alto Paraná, Paraguay (sin registro ni login para clientes)",
@@ -36,10 +36,10 @@
       "language": "Kotlin",
       "ui_framework": "Jetpack Compose + Material 3",
       "state_management": "MVVM + StateFlow + Navigation Compose",
-      "local_persistence": "Jetpack DataStore (saved_orders_json + pizza_club_points_balance)",
-      "ai_sdk": "Firebase AI Logic (com.google.firebase:firebase-ai, model: gemini-3.8-flash) + Firebase App Check (PlayIntegrity/Recaptcha/Debug)",
+      "local_persistence": "Room (PizzaClubDatabase) + Jetpack DataStore (saved_orders_json + pizza_club_points_balance)",
+      "cloud_sync": "Supabase PostgREST via OkHttp (SupabaseRestClient.kt)",
       "qr_camera": "CameraX + ZXing core",
-      "biometric_and_auth": "Jetpack CredentialManager (Google Sign-In) + AndroidX BiometricPrompt"
+      "biometric_and_auth": "PIN de Administrador (ADMIN_PIN, default 2026) + AndroidX BiometricPrompt (Face ID / Huella)"
     },
     "web_pwa": {
       "directory": "web-pwa/",
@@ -52,29 +52,24 @@
       "local_persistence_keys": {
         "orders": "pizza_club_order_history_v1",
         "points": "pizza_club_points_v1",
-        "admin_webauthn": "pizza_club_admin_webauthn_v1"
+        "cloud_config": "pizza_club_db_config_v1",
+        "admin_pin": "pizza_club_admin_pin_v1",
+        "admin_webauthn": "pizza_club_admin_webauthn_cred_v1"
       },
-      "works_without_firebase_web_keys": true,
-      "optional_cloud_config_file": "web-pwa/firebase-config.js"
+      "works_offline_without_config": true,
+      "cloud_config_file": "web-pwa/db-config.js"
     }
   },
-  "firebase_backend": {
-    "project_id": "gen-lang-client-0684931110",
-    "firestore_database_id": "ai-studio-android-pizzaclu-26d3b8a1-697e-40e6-a619-f86f22ddfb34",
-    "provisioned_products": [
-      "firestore",
-      "ai_logic"
-    ],
-    "security_rules_file": "firestore.rules",
-    "blueprint_file": "firebase-blueprint.json",
-    "collections": [
-      "/products/{productId}",
-      "/inventory/{productId}",
-      "/orders/{orderId}",
-      "/order_status/{orderId}",
-      "/administrators/{adminUid}",
-      "/payment_audit_logs/{logId}",
-      "/business_settings/{settingId}"
+  "supabase_backend": {
+    "firebase_removed": true,
+    "schema_file": "supabase_schema.sql",
+    "tables": [
+      "products",
+      "inventory",
+      "orders",
+      "order_status",
+      "payment_audit_logs",
+      "business_settings"
     ],
     "order_state_machine": [
       "PENDING_PAYMENT",
@@ -85,79 +80,55 @@
       "COMPLETED",
       "CANCELLED"
     ],
-    "privacy_architecture": "PII stays inside /orders/{orderId} (admin read/list only). Unregistered customers subscribe to non-PII /order_status/{orderId} for real-time payment confirmation updates."
+    "sync_mechanism": "Live 5-second REST polling against Supabase PostgREST (/rest/v1/*) shared across Android, iPhone PWA, and Desktop Web."
   },
   "implemented_features": [
-    "Catalogo sin login con selector 'Lista para comer' / 'Lista para hornear en casa'",
-    "Flujo de preorden y confirmacion estilo PedidosYa con barra de progreso de 5 pasos y cuenta regresiva en vivo",
-    "Historial de pedidos en localStorage (Web PWA) y DataStore (Android) con sincronizacion en tiempo real cuando Firestore Web esta configurado",
-    "Pizza Club Points: 1 punto por cada pizza comprada (excluye cancelados), guardado en localStorage ('pizza_club_points_v1') y DataStore, con barra de progreso a 10 pts",
-    "Escaner QR con camara en vivo (html5-qrcode en Web PWA, CameraX+ZXing en Android) para cajas sorpresa",
-    "Panel Admin Android y Web (web-pwa/admin.html) con Google Sign-In, Apple Sign-In (OAuthProvider apple.com) y Face ID / Biometria (BiometricPrompt en Android, WebAuthn en Web)",
-    "Maestro Pizzero IA en Android usando Firebase AI Logic (gemini-3.8-flash) con streaming y App Check",
-    "Correccion de 404 en GitHub Pages: eliminados workflows conflictivos (jekyll-gh-pages.yml, static.yml), agregado /index.html redirect -> ./web-pwa/ y /.nojekyll"
+    "Cero Firebase: eliminados Firebase Auth, Firestore, App Check, AI Logic y firebase-config.js",
+    "Base de datos híbrida Room (Android) + localStorage (Web) con sincronización online vía Supabase PostgreSQL REST",
+    "Catálogo sin login con selector 'Lista para comer' / 'Lista para hornear en casa'",
+    "Flujo de preorden y confirmación estilo PedidosYa con barra de progreso de 5 pasos y cuenta regresiva en vivo",
+    "Pizza Club Points: 1 punto por cada pizza comprada (excluye cancelados), guardado en localStorage y DataStore",
+    "Escáner QR con cámara en vivo (html5-qrcode en Web PWA, CameraX+ZXing en Android) para cajas sorpresa",
+    "Panel Admin Android y Web (web-pwa/admin.html) con PIN de propietario + Face ID / Biometría y conexión visual de Supabase",
+    "Despliegue Web en GitHub Pages (.github/workflows/deploy-web.yml) con redirect desde /index.html -> ./web-pwa/"
   ],
   "github_deployment": {
     "workflows_active": [
-      ".github/workflows/deploy-web.yml",
-      ".github/workflows/android-build.yml"
+      ".github/workflows/deploy-web.yml"
     ],
     "expected_github_pages_url_pattern": "https://<tu-usuario-github>.github.io/<tu-repositorio>/",
-    "optional_firebase_hosting_url": "https://gen-lang-client-0684931110.web.app/",
     "optional_github_secrets": [
       {
-        "name": "FIREBASE_CONFIG_JS",
-        "purpose": "Opcional: sobreescribe web-pwa/firebase-config.js durante GitHub Actions para habilitar sincronizacion Firestore en vivo en la PWA y Admin Web."
-      },
-      {
-        "name": "FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0684931110",
-        "purpose": "Opcional: despliega tambien a Firebase Hosting."
+        "name": "DB_CONFIG_JS",
+        "purpose": "Opcional: sobreescribe web-pwa/db-config.js durante GitHub Actions con tu Supabase URL y Anon Key."
       }
-    ],
-    "pages_404_fix_summary": "Se eliminaron workflows autogenerados de Jekyll/Static que subian la raiz sin index.html y competian con deploy-web.yml. Tambien se agrego /index.html con redireccion inmediata a ./web-pwa/ por si GitHub Pages esta en modo 'Deploy from branch'."
+    ]
   },
   "key_files_map": {
     "android": [
       "app/build.gradle.kts",
       "app/src/main/java/com/example/MainActivity.kt",
-      "app/src/main/java/com/example/data/AppCheckInitializer.kt",
-      "app/src/main/java/com/example/data/PizzaClubAiRepository.kt",
+      "app/src/main/java/com/example/data/PizzaClubModels.kt",
+      "app/src/main/java/com/example/data/PizzaClubRoomDatabase.kt",
+      "app/src/main/java/com/example/data/SupabaseRestClient.kt",
       "app/src/main/java/com/example/data/PizzaClubRepository.kt",
       "app/src/main/java/com/example/data/LocalOrderStore.kt",
       "app/src/main/java/com/example/viewmodel/CustomerViewModel.kt",
-      "app/src/main/java/com/example/ui/customer/CustomerCatalogScreen.kt",
-      "app/src/main/java/com/example/ui/customer/OrderTrackerScreen.kt",
-      "app/src/main/java/com/example/ui/admin/AdminDashboardScreen.kt"
+      "app/src/main/java/com/example/ui/admin/BiometricAndPinAuthHelper.kt",
+      "app/src/main/java/com/example/ui/admin/AdminAuthGate.kt"
     ],
     "web_pwa": [
       "index.html",
       "web-pwa/index.html",
       "web-pwa/admin.html",
+      "web-pwa/db-config.js",
       "web-pwa/manifest.webmanifest",
-      "web-pwa/sw.js",
-      "web-pwa/firebase-config.js"
+      "web-pwa/sw.js"
     ],
-    "docs_and_payments": [
+    "database_and_docs": [
+      "supabase_schema.sql",
       "BANCARD_INTEGRATION_MASTER.md",
-      "GITHUB_DEPLOY_GUIDE.md",
-      "ARCHITECTURE_AND_SETUP.md",
-      "firestore.rules",
-      "functions/index.js"
+      "GITHUB_DEPLOY_GUIDE.md"
     ]
-  },
-  "bancard_expansion_plan": {
-    "reference_doc": "BANCARD_INTEGRATION_MASTER.md",
-    "new_payment_methods": [
-      "BANCARD_VPOS",
-      "BANCARD_QR",
-      "CASH_ON_DELIVERY"
-    ],
-    "security_requirement": "Nunca exponer public_key ni private_key de Bancard en Android o web-pwa; single_buy y webhook confirmation_url deben ejecutarse en Firebase Functions v2 con Secret Manager."
-  },
-  "next_tasks_for_chatgpt": [
-    "1. Si el comercio desea sincronizacion nube en Web/iPhone, pedir al usuario pegar sus credenciales Web reales de Firebase Console (proyecto gen-lang-client-0684931110) en web-pwa/firebase-config.js o secreto FIREBASE_CONFIG_JS.",
-    "2. Habilitar Apple Sign-In en Firebase Console -> Authentication -> Sign-in method -> Apple para usar el boton Apple en web-pwa/admin.html.",
-    "3. Implementar la integracion real de Bancard vPOS 2.0 / QR en Cloud Functions (functions/index.js) siguiendo exactamente BANCARD_INTEGRATION_MASTER.md cuando el comercio reciba sus claves de comercio Bancard.",
-    "4. Opcional: agregar canje de 'Pizza Club Points' desde Panel Admin o descuento automatico al llegar a 10 puntos."
-  ]
+  }
 }
