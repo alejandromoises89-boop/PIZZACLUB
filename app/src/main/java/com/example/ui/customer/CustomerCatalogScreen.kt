@@ -3,6 +3,7 @@ package com.example.ui.customer
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +12,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,6 +46,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -74,6 +78,15 @@ import com.example.ui.theme.PendingAmber
 import com.example.ui.theme.PendingAmberContainer
 import com.example.ui.theme.WhatsAppGreen
 import com.example.ui.theme.WhatsAppGreenContainer
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.example.viewmodel.AiRecommendationUiState
 import com.example.viewmodel.CatalogItemUi
 import com.example.viewmodel.CatalogUiState
 
@@ -81,11 +94,14 @@ import com.example.viewmodel.CatalogUiState
 fun CustomerCatalogScreen(
     uiState: CatalogUiState,
     selectedPreparationMode: PreparationMode,
+    aiRecommendationState: AiRecommendationUiState = AiRecommendationUiState.Idle,
     onSelectPreparationMode: (PreparationMode) -> Unit,
     onIncrement: (String, Long) -> Unit,
     onDecrement: (String) -> Unit,
     onProceedToCheckout: () -> Unit,
     onOpenSocialQr: () -> Unit,
+    onRequestAiRecommendation: (String) -> Unit = {},
+    onClearAiRecommendation: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     when (uiState) {
@@ -185,6 +201,14 @@ fun CustomerCatalogScreen(
                                 acceptingOrders = uiState.settings.acceptingOrders,
                                 onIncrement = { onIncrement(item.product.id, item.stock) },
                                 onDecrement = { onDecrement(item.product.id) }
+                            )
+                        }
+
+                        item(span = { GridItemSpan(columns) }) {
+                            GeminiMaestroPizzeroCard(
+                                state = aiRecommendationState,
+                                onAsk = onRequestAiRecommendation,
+                                onClear = onClearAiRecommendation
                             )
                         }
                     }
@@ -583,3 +607,183 @@ private fun FloatingCartBar(
         }
     }
 }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GeminiMaestroPizzeroCard(
+    state: AiRecommendationUiState,
+    onAsk: (String) -> Unit,
+    onClear: () -> Unit
+) {
+    var cravingInput by remember { mutableStateOf("") }
+    val quickPrompts = listOf(
+        "Algo picante y crocante",
+        "Full queso bien cremoso",
+        "Suave para compartir en familia"
+    )
+
+    Card(
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, CheeseSecondary.copy(alpha = 0.7f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("gemini_maestro_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        color = CheeseContainer,
+                        shape = CircleShape,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = OnCheeseContainer,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            text = "Maestro Pizzero IA",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "¿No sabés cuál elegir? Contame tu antojo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (state !is AiRecommendationUiState.Idle) {
+                    TextButton(onClick = onClear) {
+                        Text("Limpiar")
+                    }
+                }
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                quickPrompts.forEach { chip ->
+                    SuggestionChip(
+                        onClick = {
+                            cravingInput = chip
+                            onAsk(chip)
+                        },
+                        label = { Text(chip, style = MaterialTheme.typography.labelMedium) }
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = cravingInput,
+                onValueChange = { cravingInput = it },
+                label = { Text("Ej: Somos 3, queremos algo con pollo y queso") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("ai_craving_input")
+            )
+
+            Button(
+                onClick = { onAsk(cravingInput) },
+                enabled = state !is AiRecommendationUiState.Loading && state !is AiRecommendationUiState.Streaming,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("ai_recommend_button"),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (state is AiRecommendationUiState.Loading || state is AiRecommendationUiState.Streaming) {
+                        "Consultando al Maestro..."
+                    } else {
+                        "Consultar al Maestro Pizzero"
+                    }
+                )
+            }
+
+            when (state) {
+                is AiRecommendationUiState.Idle -> Unit
+                is AiRecommendationUiState.Loading -> {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(999.dp))
+                    )
+                }
+                is AiRecommendationUiState.Streaming -> {
+                    Surface(
+                        color = CheeseContainer.copy(alpha = 0.7f),
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = state.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = OnCheeseContainer,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+                is AiRecommendationUiState.Success -> {
+                    Surface(
+                        color = CheeseContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        border = BorderStroke(1.dp, CheeseSecondary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("ai_recommend_result")
+                    ) {
+                        Text(
+                            text = state.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = OnCheeseContainer,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+                is AiRecommendationUiState.Error -> {
+                    Surface(
+                        color = DangerRedContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("ai_recommend_error")
+                    ) {
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DangerRed,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+

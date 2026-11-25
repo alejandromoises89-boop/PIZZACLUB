@@ -11,12 +11,15 @@ import com.example.data.LocalOrderStore
 import com.example.data.LocalSavedOrder
 import com.example.data.OrderLineItem
 import com.example.data.OrderStatusTrackerModel
+import com.example.data.PizzaClubAiRepository
 import com.example.data.PizzaClubRepository
 import com.example.data.PreparationMode
 import com.example.data.ProductModel
 import com.example.data.unwrapFirestoreMessage
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -68,10 +71,19 @@ sealed interface CatalogUiState {
     data class Error(val message: String) : CatalogUiState
 }
 
+sealed interface AiRecommendationUiState {
+    data object Idle : AiRecommendationUiState
+    data object Loading : AiRecommendationUiState
+    data class Streaming(val text: String) : AiRecommendationUiState
+    data class Success(val text: String) : AiRecommendationUiState
+    data class Error(val message: String) : AiRecommendationUiState
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class CustomerViewModel(
     private val repository: PizzaClubRepository,
-    private val localOrderStore: LocalOrderStore
+    private val localOrderStore: LocalOrderStore,
+    private val aiRepository: PizzaClubAiRepository = PizzaClubAiRepository()
 ) : ViewModel() {
 
     private val _cartQuantities = MutableStateFlow<Map<String, Int>>(emptyMap())
@@ -92,11 +104,21 @@ class CustomerViewModel(
 
     private var hasSyncedInitialHistory = false
 
+    private val _aiRecommendationState = MutableStateFlow<AiRecommendationUiState>(AiRecommendationUiState.Idle)
+    val aiRecommendationState: StateFlow<AiRecommendationUiState> = _aiRecommendationState.asStateFlow()
+
     val savedOrders: StateFlow<List<LocalSavedOrder>> = localOrderStore.savedOrdersFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000L),
             initialValue = emptyList()
+        )
+
+    val pizzaClubPoints: StateFlow<Int> = localOrderStore.pointsBalanceFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = 0
         )
 
     // Real-time tracker for the currently viewed customer order (updates automatically when Admin confirms payment)
@@ -241,6 +263,51 @@ class CustomerViewModel(
 
     fun clearSubmitError() {
         _submitError.value = null
+    }
+
+    fun requestPizzaRecommendation(craving: String) {
+        val cleanCraving = craving.trim()
+        if (cleanCraving.isEmpty()) {
+            _aiRecommendationState.value = AiRecommendationUiState.Error("Contanos qué se te antoja para recomendarte.")
+            return
+        }
+        val ready = catalogState.value as? CatalogUiState.Ready
+        val flavorsSummary = ready?.items
+            ?.filter { it.stock > 0 }
+            ?.joinToString("\n") { "- ${it.product.name} (${it.stock} disp.): ${it.product.description}" }
+            ?: "Pepperoni, Mozzarella, Cuatro quesos, Pollo Catupiri"
+
+        viewModelScope.launch {
+            _aiRecommendationState.value = AiRecommendationUiState.Loading
+            val accumulated = StringBuilder()
+            try {
+                withTimeout(60_000L) {
+                    aiRepository.streamFlavorRecommendation(cleanCraving, flavorsSummary).collect { chunk ->
+                        accumulated.append(chunk)
+                        _aiRecommendationState.value = AiRecommendationUiState.Streaming(accumulated.toString())
+                    }
+                }
+                if (accumulated.isNotBlank()) {
+                    _aiRecommendationState.value = AiRecommendationUiState.Success(accumulated.toString().trim())
+                } else {
+                    _aiRecommendationState.value = AiRecommendationUiState.Error("Gemini no devolvió ninguna sugerencia.")
+                }
+            } catch (e: TimeoutCancellationException) {
+                Log.e("CustomerVM", "Gemini recommendation timed out", e)
+                _aiRecommendationState.value = AiRecommendationUiState.Error("La consulta tardó más de 60 segundos. Intentá nuevamente.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("CustomerVM", "Gemini recommendation failed", e)
+                _aiRecommendationState.value = AiRecommendationUiState.Error(
+                    e.localizedMessage ?: "No pudimos conectar con Gemini AI en este momento."
+                )
+            }
+        }
+    }
+
+    fun clearPizzaRecommendation() {
+        _aiRecommendationState.value = AiRecommendationUiState.Idle
     }
 
     fun submitPreOrder(onOrderCreated: (String) -> Unit) {

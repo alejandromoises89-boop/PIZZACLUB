@@ -51,6 +51,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.data.DefaultCatalogDefaults
 import com.example.data.LocalOrderStore
 import com.example.data.PizzaClubRepository
+import com.example.data.configureAppCheck
 import com.example.ui.admin.AdminAuthGate
 import com.example.ui.customer.CheckoutScreen
 import com.example.ui.customer.CustomerCatalogScreen
@@ -76,6 +77,7 @@ private data class TopDestination(
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
         setContent {
             PizzaClubTheme {
@@ -109,6 +111,8 @@ fun PizzaClubApp() {
     val selectedOrderId by customerViewModel.selectedOrderId.collectAsStateWithLifecycle()
     val liveTrackedStatus by customerViewModel.liveTrackedOrderStatus.collectAsStateWithLifecycle()
     val isRefreshingHistory by customerViewModel.isRefreshingHistory.collectAsStateWithLifecycle()
+    val aiRecommendationState by customerViewModel.aiRecommendationState.collectAsStateWithLifecycle()
+    val pizzaClubPoints by customerViewModel.pizzaClubPoints.collectAsStateWithLifecycle()
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -221,6 +225,7 @@ fun PizzaClubApp() {
                         CustomerCatalogScreen(
                             uiState = catalogState,
                             selectedPreparationMode = checkoutForm.preparationMode,
+                            aiRecommendationState = aiRecommendationState,
                             onSelectPreparationMode = { mode ->
                                 customerViewModel.updateCheckoutForm { it.copy(preparationMode = mode) }
                             },
@@ -232,7 +237,9 @@ fun PizzaClubApp() {
                             onOpenSocialQr = {
                                 sheetInitialTab = 1
                                 showSocialTreasureSheet = true
-                            }
+                            },
+                            onRequestAiRecommendation = customerViewModel::requestPizzaRecommendation,
+                            onClearAiRecommendation = customerViewModel::clearPizzaRecommendation
                         )
                     }
 
@@ -264,6 +271,7 @@ fun PizzaClubApp() {
                             liveTracker = liveTrackedStatus,
                             settings = activeSettings,
                             isRefreshingHistory = isRefreshingHistory,
+                            pizzaClubPoints = pizzaClubPoints,
                             onSelectOrder = customerViewModel::selectOrder,
                             onRefreshHistory = { customerViewModel.refreshAllSavedOrdersStatus() },
                             onGoToMenu = { navigateTopLevel(ROUTE_CATALOG) },

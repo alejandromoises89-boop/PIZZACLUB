@@ -290,6 +290,26 @@
       font-size: 13px; font-weight: 700; z-index: 60; display: none; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
     }
     .toast-msg.show { display: block; }
+    .points-card {
+      background: linear-gradient(135deg, #FCF0D6 0%, #FFF8EA 100%);
+      border: 1.5px solid var(--gold);
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    .points-badge {
+      background: var(--dark); color: var(--gold);
+      padding: 6px 14px; border-radius: 999px;
+      font-size: 16px; font-weight: 900; white-space: nowrap;
+    }
+    .points-bar-track {
+      height: 8px; border-radius: 999px; background: rgba(255,255,255,0.75);
+      overflow: hidden; margin: 10px 0 8px;
+    }
+    .points-bar-fill {
+      height: 100%; border-radius: 999px; background: var(--primary);
+      transition: width 0.35s ease;
+    }
   </style>
 </head>
 <body>
@@ -383,6 +403,8 @@
         Comprobando conexión con el panel de Pizza Club...
       </div>
 
+      <div id="points-section"></div>
+
       <div id="history-list"></div>
     </section>
 
@@ -470,6 +492,7 @@
 
   <script type="module">
     const STORAGE_KEY = "pizza_club_order_history_v1";
+    const POINTS_KEY = "pizza_club_points_v1";
     const DATABASE_ID = window.PIZZA_CLUB_DATABASE_ID || "ai-studio-android-pizzaclu-26d3b8a1-697e-40e6-a619-f86f22ddfb34";
 
     const DEFAULT_PRODUCTS = [
@@ -540,12 +563,59 @@
       }
     }
 
+    function computeOrderPizzasCount(order) {
+      if (!order || order.status === "CANCELLED") return 0;
+      return (order.items || []).reduce((sum, it) => sum + Math.max(0, Number(it.quantity || 0)), 0);
+    }
+
+    function syncPizzaClubPointsFromOrders(list) {
+      const orders = Array.isArray(list) ? list : [];
+      const perOrder = {};
+      let balance = 0;
+      orders.forEach((order) => {
+        const pts = computeOrderPizzasCount(order);
+        if (pts > 0 && order.orderId) {
+          perOrder[order.orderId] = pts;
+          balance += pts;
+        }
+      });
+      const payload = {
+        balance,
+        totalEarned: balance,
+        perOrder,
+        updatedAtIso: new Date().toISOString()
+      };
+      try {
+        localStorage.setItem(POINTS_KEY, JSON.stringify(payload));
+      } catch {
+        // Ignore storage quota errors
+      }
+      return payload;
+    }
+
+    function loadPizzaClubPoints(ordersOverride) {
+      if (Array.isArray(ordersOverride)) {
+        return syncPizzaClubPointsFromOrders(ordersOverride);
+      }
+      try {
+        const raw = localStorage.getItem(POINTS_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed.balance === "number") return parsed;
+        }
+      } catch {
+        // Fall through and recompute from saved orders
+      }
+      return syncPizzaClubPointsFromOrders(loadOrders());
+    }
+
     function saveOrders(list) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 30)));
       } catch {
         // Ignore storage quota errors gracefully
       }
+      syncPizzaClubPointsFromOrders(list);
       updateHistoryBadge(list.length);
     }
 
@@ -898,10 +968,53 @@
       renderOrderHistory();
     };
 
+    function renderPizzaClubPointsSection(orders) {
+      const container = document.getElementById("points-section");
+      if (!container) return;
+      const pointsData = loadPizzaClubPoints(orders);
+      const balance = Number(pointsData.balance || 0);
+      const goal = 10;
+      const mod = balance % goal;
+      const reachedGoal = balance > 0 && mod === 0;
+      const progressPct = reachedGoal ? 100 : (mod / goal) * 100;
+      const remaining = reachedGoal ? 0 : goal - mod;
+      const recentOrders = orders.filter((o) => computeOrderPizzasCount(o) > 0).slice(0, 3);
+
+      container.innerHTML = `<section class="points-card" aria-label="Pizza Club Points">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div>
+            <strong style="font-size:17px;color:#473004">🍕 Pizza Club Points</strong>
+            <div style="font-size:12px;color:#6E4D12;margin-top:2px">1 punto por cada pizza comprada (guardado en este dispositivo)</div>
+          </div>
+          <span id="pizza-club-points-balance" class="points-badge">${balance} ${balance === 1 ? "pto" : "pts"}</span>
+        </div>
+        <div class="points-bar-track">
+          <div class="points-bar-fill" style="width:${progressPct}%"></div>
+        </div>
+        <div style="font-size:13px;font-weight:700;color:#473004">
+          ${reachedGoal
+            ? `🎉 ¡Completaste ${goal} puntos! Mostrá tu pantalla por WhatsApp para canjear tu premio VIP.`
+            : `Te faltan ${remaining} ${remaining === 1 ? "pizza" : "pizzas"} para tu próximo premio VIP (${goal} pts).`}
+        </div>
+        ${recentOrders.length > 0 ? `
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(231,173,72,0.55);font-size:12px;display:grid;gap:4px">
+            ${recentOrders.map((o) => {
+              const pts = computeOrderPizzasCount(o);
+              return `<div style="display:flex;justify-content:space-between;color:#5C3D06">
+                <span>${escapeHtml(o.orderNumber)} (${pts} ${pts === 1 ? "pizza" : "pizzas"})</span>
+                <strong style="color:var(--wa)">+${pts} pts</strong>
+              </div>`;
+            }).join("")}
+          </div>
+        ` : ""}
+      </section>`;
+    }
+
     function renderOrderHistory() {
       const container = document.getElementById("history-list");
       const orders = loadOrders();
       updateHistoryBadge(orders.length);
+      renderPizzaClubPointsSection(orders);
 
       if (orders.length === 0) {
         container.innerHTML = `<div class="card" style="text-align:center;padding:28px 18px">
@@ -1129,14 +1242,12 @@
       const cfg = window.PIZZA_CLUB_FIREBASE_CONFIG;
       if (!isValidFirebaseConfig(cfg)) {
         syncBanner.innerHTML = `
-          <div>📱 <strong>Modo local activo (<code>localStorage</code> + WhatsApp):</strong> Tus pedidos quedan guardados en este dispositivo.</div>
+          <div>✅ <strong>Modo listo para pedir activo:</strong> Tu historial, <strong>Pizza Club Points</strong> y cuenta regresiva se guardan automáticamente en este dispositivo con envío directo por WhatsApp.</div>
           <details style="margin-top:6px">
-            <summary style="cursor:pointer;font-weight:700;color:var(--dark)">⚙️ Cómo activar la sincronización completa en la nube (<code>firebase-config.js</code>)</summary>
+            <summary style="cursor:pointer;font-weight:700;color:var(--dark)">⚙️ Opcional: Conectar sincronización en la nube (<code>firebase-config.js</code>)</summary>
             <ol style="margin:8px 0 2px;padding-left:18px;line-height:1.55">
-              <li>Abrí la plantilla <code>web-pwa/firebase-config.js</code> que ya está incluida en el proyecto.</li>
-              <li>Obtené tus credenciales Web en <strong>Firebase Console</strong> (<code>gen-lang-client-0684931110</code> → Configuración → Tus apps → Web) o con <code>firebase apps:sdkconfig web</code>.</li>
-              <li>Reemplazá <code>YOUR_FIREBASE_WEB_API_KEY</code>, <code>YOUR_FIREBASE_MESSAGING_SENDER_ID</code> y <code>YOUR_FIREBASE_WEB_APP_ID</code> (dejando <code>PIZZA_CLUB_DATABASE_ID</code> tal cual).</li>
-              <li>Si desplegás con GitHub Actions, guardá el archivo completo en el secreto <code>FIREBASE_CONFIG_JS</code> y autorizá tu dominio en <em>Firebase Authentication → Authorized domains</em> para usar <a href="./admin.html" style="color:var(--primary)">Panel Admin</a>.</li>
+              <li>Si querés sincronizar en tiempo real con <a href="./admin.html" style="color:var(--primary)">Panel Admin</a>, pegá las credenciales Web del proyecto <code>gen-lang-client-0684931110</code> en <code>web-pwa/firebase-config.js</code> (o en el secreto <code>FIREBASE_CONFIG_JS</code> de GitHub).</li>
+              <li>Autorizá tu dominio de GitHub Pages en <em>Firebase Authentication → Authorized domains</em>.</li>
             </ol>
           </details>`;
         return;

@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -13,10 +14,15 @@ private val Context.pizzaClubDataStore by preferencesDataStore(name = "pizza_clu
 
 class LocalOrderStore(private val context: Context) {
     private val ordersKey = stringPreferencesKey("saved_orders_json")
+    private val pointsBalanceKey = intPreferencesKey("pizza_club_points_balance")
 
     val savedOrdersFlow: Flow<List<LocalSavedOrder>> = context.pizzaClubDataStore.data.map { prefs ->
         val raw = prefs[ordersKey] ?: return@map emptyList()
         parseOrdersJson(raw)
+    }
+
+    val pointsBalanceFlow: Flow<Int> = context.pizzaClubDataStore.data.map { prefs ->
+        prefs[pointsBalanceKey] ?: parseOrdersJson(prefs[ordersKey] ?: "[]").computePizzaClubPoints()
     }
 
     suspend fun saveOrder(order: LocalSavedOrder) {
@@ -26,6 +32,7 @@ class LocalOrderStore(private val context: Context) {
             current.add(0, order)
             val trimmed = current.take(25)
             prefs[ordersKey] = serializeOrdersJson(trimmed)
+            prefs[pointsBalanceKey] = trimmed.computePizzaClubPoints()
         }
     }
 
@@ -46,8 +53,13 @@ class LocalOrderStore(private val context: Context) {
                 }
             }
             prefs[ordersKey] = serializeOrdersJson(updated)
+            prefs[pointsBalanceKey] = updated.computePizzaClubPoints()
         }
     }
+
+    private fun List<LocalSavedOrder>.computePizzaClubPoints(): Int =
+        filter { it.status != OrderStatus.CANCELLED.rawValue }
+            .sumOf { order -> order.items.sumOf { it.quantity.toInt().coerceAtLeast(0) } }
 
     private fun serializeOrdersJson(orders: List<LocalSavedOrder>): String {
         val array = JSONArray()

@@ -46,6 +46,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +59,7 @@ import java.util.Date
 import java.util.Locale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -97,6 +99,7 @@ fun OrderTrackerScreen(
     liveTracker: OrderStatusTrackerModel?,
     settings: BusinessSettingsModel,
     isRefreshingHistory: Boolean,
+    pizzaClubPoints: Int = 0,
     onSelectOrder: (String) -> Unit,
     onRefreshHistory: () -> Unit,
     onGoToMenu: () -> Unit,
@@ -167,6 +170,14 @@ fun OrderTrackerScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Sección Pizza Club Points (1 punto por cada pizza comprada)
+        item {
+            PizzaClubPointsCard(
+                points = pizzaClubPoints,
+                savedOrders = savedOrders
+            )
+        }
+
         // Historial completo de pedidos guardados con estado de confirmación por Admin
         item {
             OrderHistorySection(
@@ -745,3 +756,127 @@ private fun OrderHistorySection(
         }
     }
 }
+
+@Composable
+private fun PizzaClubPointsCard(
+    points: Int,
+    savedOrders: List<LocalSavedOrder>
+) {
+    val goal = 10
+    val progress = ((points % goal).toFloat() / goal.toFloat()).let {
+        if (points > 0 && points % goal == 0) 1f else it
+    }
+    val remaining = if (points > 0 && points % goal == 0) 0 else goal - (points % goal)
+
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = CheeseContainer),
+        border = BorderStroke(1.dp, CheeseSecondary),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("pizza_club_points_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        color = TomatoPrimary,
+                        shape = CircleShape,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            text = "Pizza Club Points",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = OnCheeseContainer
+                        )
+                        Text(
+                            text = "1 punto por cada pizza comprada",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnCheeseContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+
+                Surface(
+                    color = EspressoDark,
+                    shape = RoundedCornerShape(999.dp)
+                ) {
+                    Text(
+                        text = "$points pts",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+                        color = CheeseSecondary,
+                        modifier = Modifier
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                            .testTag("pizza_club_points_balance")
+                    )
+                }
+            }
+
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(999.dp)),
+                color = TomatoPrimary,
+                trackColor = Color.White.copy(alpha = 0.65f)
+            )
+
+            Text(
+                text = if (remaining == 0 && points > 0) {
+                    "¡Meta de $goal puntos alcanzada! Mostrá tu pantalla por WhatsApp para reclamar tu premio VIP."
+                } else {
+                    "Te faltan $remaining ${if (remaining == 1) "pizza" else "pizzas"} para desbloquear tu próximo premio VIP ($goal pts)."
+                },
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                color = OnCheeseContainer
+            )
+
+            val recentEarned = savedOrders
+                .filter { it.status != OrderStatus.CANCELLED.rawValue }
+                .take(3)
+            if (recentEarned.isNotEmpty()) {
+                HorizontalDivider(color = CheeseSecondary.copy(alpha = 0.6f))
+                recentEarned.forEach { order ->
+                    val qty = order.items.sumOf { it.quantity.toInt().coerceAtLeast(0) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${order.orderNumber} ($qty ${if (qty == 1) "pizza" else "pizzas"})",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = OnCheeseContainer.copy(alpha = 0.85f)
+                        )
+                        Text(
+                            text = "+$qty pts",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = WhatsAppGreen
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
